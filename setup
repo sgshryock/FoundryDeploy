@@ -1,0 +1,145 @@
+#!/bin/bash
+set -e
+
+REPO_URL="https://github.com/sgshryock/FoundryDeploy.git"
+INSTALL_DIR="FoundryDeploy"
+
+echo "=== Foundry VTT Deployment Setup ==="
+echo
+
+# Check for required commands
+check_command() {
+    if command -v "$1" &> /dev/null; then
+        echo "[OK] $1 is installed"
+        return 0
+    else
+        echo "[MISSING] $1 is not installed"
+        return 1
+    fi
+}
+
+missing=0
+
+echo "Checking dependencies..."
+echo
+
+check_command git || missing=1
+check_command docker || missing=1
+docker compose version &>/dev/null || {
+    if command -v docker-compose &> /dev/null; then
+        echo "[OK] docker-compose (legacy) is installed"
+    else
+        echo "[MISSING] docker compose is not installed"
+        missing=1
+    fi
+}
+
+echo
+
+if [ $missing -eq 1 ]; then
+    echo "Some dependencies are missing. Install them with:"
+    echo
+    echo "  # Debian/Ubuntu:"
+    echo "  sudo apt update"
+    echo "  sudo apt install -y git docker.io docker-compose-v2"
+    echo "  sudo usermod -aG docker \$USER"
+    echo "  # Log out and back in for group changes to take effect"
+    echo
+    echo "  # Fedora:"
+    echo "  sudo dnf install -y git docker docker-compose"
+    echo "  sudo systemctl enable --now docker"
+    echo "  sudo usermod -aG docker \$USER"
+    echo
+    echo "  # Arch:"
+    echo "  sudo pacman -S git docker docker-compose"
+    echo "  sudo systemctl enable --now docker"
+    echo "  sudo usermod -aG docker \$USER"
+    echo
+    exit 1
+fi
+
+# Check if docker daemon is running
+if ! docker info &> /dev/null; then
+    echo "[ERROR] Docker daemon is not running"
+    echo "  Start it with: sudo systemctl start docker"
+    exit 1
+fi
+echo "[OK] Docker daemon is running"
+
+echo
+
+# Clone repo if we're not already in it
+if [ ! -f "compose.yml" ]; then
+    echo "Cloning FoundryDeploy repository..."
+    git clone "$REPO_URL" "$INSTALL_DIR"
+    cd "$INSTALL_DIR"
+    echo
+fi
+
+# Prompt for configuration
+echo "=== Configuration ==="
+echo
+echo "Enter your Foundry VTT account credentials."
+echo "These are used to download Foundry from your account."
+echo
+
+read -p "Foundry Username: " foundry_username
+read -sp "Foundry Password: " foundry_password
+echo
+
+echo
+read -p "Foundry Admin Key (password for the web UI): " foundry_admin_key
+
+echo
+read -p "Hostname for this server (e.g., myserver.local): " foundry_hostname
+
+read -p "Port to expose Foundry on [80]: " foundry_port
+foundry_port=${foundry_port:-80}
+
+read -p "Timezone [America/New_York]: " timezone
+timezone=${timezone:-America/New_York}
+
+# Create .env file
+echo
+echo "Creating .env file..."
+
+cat > .env << EOF
+# Foundry account credentials
+FOUNDRY_USERNAME=$foundry_username
+FOUNDRY_PASSWORD=$foundry_password
+
+# Foundry admin access key for this server instance
+FOUNDRY_ADMIN_KEY=$foundry_admin_key
+
+# Container settings
+CONTAINER_CACHE=/data/container_cache
+CONTAINER_PRESERVE_CONFIG=true
+
+TZ=$timezone
+
+# Hostname for the Foundry server
+FOUNDRY_HOSTNAME=$foundry_hostname
+
+# Port to expose Foundry on
+FOUNDRY_PORT=$foundry_port
+EOF
+
+echo "[OK] .env file created"
+
+# Start the containers
+echo
+echo "=== Starting Foundry VTT ==="
+echo
+
+docker compose up -d
+
+echo
+echo "=== Setup Complete ==="
+echo
+echo "Foundry VTT is now starting. It may take a few minutes to download and initialize."
+echo
+echo "Access Foundry at: http://$foundry_hostname:$foundry_port"
+echo
+echo "View logs with:"
+echo "  docker compose logs -f"
+echo

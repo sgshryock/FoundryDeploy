@@ -2,14 +2,54 @@
 
 Docker Compose setup for running Foundry VTT with a Caddy reverse proxy for local network access.
 
-## Prerequisites
+## Quick Start (Fresh Linux System)
 
-- Docker and Docker Compose installed
+```bash
+# Update and upgrade your system first
+sudo apt update && sudo apt upgrade -y
+
+# Install dependencies (Debian/Ubuntu)
+sudo apt install -y git curl docker.io docker-compose-v2
+sudo usermod -aG docker $USER
+newgrp docker
+
+# Download and run setup
+curl -O https://raw.githubusercontent.com/sgshryock/FoundryDeploy/main/setup
+chmod +x setup
+./setup
+```
+
+The setup script will:
+1. Check that all dependencies are installed
+2. Clone the repository
+3. Prompt you for your Foundry credentials and configuration
+4. Create the `.env` file
+5. Start Foundry VTT
+
+## Manual Setup
+
+### Prerequisites
+
+- Git
+- Docker and Docker Compose
 - A valid Foundry VTT license and account
 
-## Setup
+#### Installing Docker (Debian/Ubuntu)
 
-1. Clone this repository to your server
+```bash
+sudo apt update
+sudo apt install -y git docker.io docker-compose-v2
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+### Installation
+
+1. Clone this repository to your server:
+   ```bash
+   git clone https://github.com/sgshryock/FoundryDeploy.git
+   cd FoundryDeploy
+   ```
 
 2. Copy the example environment file:
    ```bash

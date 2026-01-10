@@ -21,6 +21,7 @@ Docker Compose setup for running Foundry VTT with a Caddy reverse proxy for loca
    - `FOUNDRY_PASSWORD` - Your Foundry VTT account password
    - `FOUNDRY_ADMIN_KEY` - Admin password for the Foundry web UI
    - `FOUNDRY_HOSTNAME` - Hostname for this server (e.g., `myserver.local`)
+   - `FOUNDRY_PORT` - Port to expose Foundry on (default: `80`)
 
 ## Deployment
 
@@ -42,6 +43,11 @@ docker compose logs -f
 ## Access
 
 Once deployed, access Foundry at:
+```
+http://<FOUNDRY_HOSTNAME>:<FOUNDRY_PORT>
+```
+
+If using the default port 80, you can omit the port:
 ```
 http://<FOUNDRY_HOSTNAME>
 ```

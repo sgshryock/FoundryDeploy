@@ -27,7 +27,7 @@ services:
     depends_on:
       - foundry
     ports:
-      - "80:80"
+      - "${FOUNDRY_PORT:-80}:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
     restart: unless-stopped

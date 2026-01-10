@@ -1,0 +1,36 @@
+services:
+  foundry-init:
+    image: alpine:3.20
+    command: ["sh", "-c", "mkdir -p /data && chown -R 1000:1000 /data"]
+    volumes:
+      - foundry_data:/data
+    restart: "no"
+
+  foundry:
+    image: felddy/foundryvtt:13
+    hostname: ${FOUNDRY_HOSTNAME}
+    container_name: foundry
+    depends_on:
+      foundry-init:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    expose:
+      - "30000"
+    volumes:
+      - foundry_data:/data
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    depends_on:
+      - foundry
+    ports:
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    restart: unless-stopped
+
+volumes:
+  foundry_data:

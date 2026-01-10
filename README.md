@@ -4,17 +4,14 @@ Docker Compose setup for running Foundry VTT with a Caddy reverse proxy for loca
 
 ## Quick Start
 
+1. Copy the `setup` script to your server
+2. Run:
 ```bash
-# Update and upgrade your system
 sudo apt update && sudo apt upgrade -y
-
-# Download and run setup
-curl -O https://raw.githubusercontent.com/sgshryock/FoundryDeploy/main/setup
-chmod +x setup
 ./setup
 ```
 
-The setup script will check for missing dependencies and provide install instructions if needed.
+The setup script will check for missing dependencies, clone the repository, and guide you through configuration.
 
 ## Manual Setup
 

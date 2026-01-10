@@ -7,7 +7,7 @@ services:
     restart: "no"
 
   foundry:
-    image: felddy/foundryvtt:13
+    image: felddy/foundryvtt:${FOUNDRY_DOCKER_TAG:-release}
     hostname: ${FOUNDRY_HOSTNAME}
     container_name: foundry
     depends_on:

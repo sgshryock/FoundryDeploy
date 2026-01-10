@@ -91,6 +91,15 @@ echo
 read -p "Foundry Admin Key (password for the web UI): " foundry_admin_key
 
 echo
+echo "Foundry Version:"
+echo "  - Press Enter for latest stable"
+echo "  - Or enter a major version number (e.g., 12, 13)"
+read -p "Version [latest]: " foundry_docker_tag
+if [ -z "$foundry_docker_tag" ] || [ "$foundry_docker_tag" = "latest" ]; then
+    foundry_docker_tag="release"
+fi
+
+echo
 read -p "Hostname for this server (e.g., myserver.local): " foundry_hostname
 
 read -p "Port to expose Foundry on [80]: " foundry_port
@@ -110,6 +119,9 @@ FOUNDRY_PASSWORD=$foundry_password
 
 # Foundry admin access key for this server instance
 FOUNDRY_ADMIN_KEY=$foundry_admin_key
+
+# Foundry version (release = latest, or specify major version like 12, 13)
+FOUNDRY_DOCKER_TAG=$foundry_docker_tag
 
 # Container settings
 CONTAINER_CACHE=/data/container_cache

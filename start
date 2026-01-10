@@ -1,0 +1,83 @@
+#!/bin/bash
+set -e
+
+echo "=== Starting Foundry VTT ==="
+echo
+
+# Check for docker
+if ! command -v docker &> /dev/null; then
+    echo "[ERROR] Docker is not installed"
+    exit 1
+fi
+
+# Check if docker daemon is running
+if ! docker info &> /dev/null; then
+    echo "[ERROR] Docker daemon is not running"
+    echo "  Start it with: sudo systemctl start docker"
+    exit 1
+fi
+
+# Check for docker compose
+if ! docker compose version &> /dev/null; then
+    if ! command -v docker-compose &> /dev/null; then
+        echo "[ERROR] Docker Compose is not installed"
+        exit 1
+    fi
+fi
+
+# Check for .env file
+if [ ! -f .env ]; then
+    echo "[ERROR] No .env file found. Run ./setup first or copy .env.example to .env"
+    exit 1
+fi
+
+# Load port from .env
+FOUNDRY_PORT=$(grep -E "^FOUNDRY_PORT=" .env | cut -d'=' -f2)
+FOUNDRY_PORT=${FOUNDRY_PORT:-80}
+
+echo "Starting containers..."
+docker compose up -d
+
+echo
+echo "Waiting for containers to start..."
+sleep 5
+
+# Check container status
+echo
+echo "Checking container status..."
+
+foundry_status=$(docker compose ps --format json | grep -o '"State":"[^"]*"' | head -1 | cut -d'"' -f4)
+caddy_status=$(docker compose ps --format json | grep -o '"State":"[^"]*"' | tail -1 | cut -d'"' -f4)
+
+if docker compose ps | grep -q "foundry.*Up"; then
+    echo "[OK] Foundry container is running"
+else
+    echo "[ERROR] Foundry container is not running"
+    echo "  Check logs with: docker compose logs foundry"
+    exit 1
+fi
+
+if docker compose ps | grep -q "caddy.*Up"; then
+    echo "[OK] Caddy container is running"
+else
+    echo "[ERROR] Caddy container is not running"
+    echo "  Check logs with: docker compose logs caddy"
+    exit 1
+fi
+
+# Check if port is listening
+if docker compose ps | grep -q "0.0.0.0:${FOUNDRY_PORT}->80"; then
+    echo "[OK] Caddy is listening on port ${FOUNDRY_PORT}"
+else
+    echo "[WARN] Could not verify port ${FOUNDRY_PORT} is exposed"
+fi
+
+echo
+echo "=== Foundry VTT Started ==="
+echo
+FOUNDRY_HOSTNAME=$(grep -E "^FOUNDRY_HOSTNAME=" .env | cut -d'=' -f2)
+echo "Access Foundry at: http://${FOUNDRY_HOSTNAME}:${FOUNDRY_PORT}"
+echo
+echo "View logs with:"
+echo "  docker compose logs -f"
+echo

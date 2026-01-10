@@ -1,0 +1,29 @@
+#!/bin/bash
+set -e
+
+echo "=== Stopping Foundry VTT ==="
+echo
+
+# Check for docker compose
+if ! docker compose version &> /dev/null; then
+    if ! command -v docker-compose &> /dev/null; then
+        echo "[ERROR] Docker Compose is not installed"
+        exit 1
+    fi
+fi
+
+# Check if containers are running
+if ! docker compose ps --quiet 2>/dev/null | grep -q .; then
+    echo "No containers are running."
+    exit 0
+fi
+
+echo "Stopping containers..."
+docker compose down
+
+echo
+echo "=== Foundry VTT Stopped ==="
+echo
+echo "Data is preserved in the Docker volume."
+echo "To remove all data, run: docker compose down -v"
+echo

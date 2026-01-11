@@ -783,24 +783,26 @@ sudo systemctl restart nginx
 sudo systemctl enable nginx
 echo "[OK] nginx configured and running"
 
-# Check if Foundry is already downloaded
+# Check if Foundry is already initialized
 echo
-if docker volume ls | grep -q "foundry_data"; then
+# Get the actual volume name created by Docker Compose (includes project name prefix)
+VOLUME_NAME=$(docker compose config --format json | grep -o '"foundry_data"' | head -1 | tr -d '"' || echo "foundry_data")
+FULL_VOLUME_NAME="$(basename $(pwd) | tr '[:upper:]' '[:lower:]')_${VOLUME_NAME}"
+
+if docker volume ls --format '{{.Name}}' | grep -q "^${FULL_VOLUME_NAME}$"; then
     echo "[INFO] Checking for existing Foundry installation..."
 
-    # Check if the volume has Foundry files
-    if docker run --rm -v foundry_data:/data alpine test -f /data/resources/app/main.mjs 2>/dev/null; then
-        echo "[OK] Foundry VTT is already installed, will NOT download again"
-        echo "     (This avoids hitting Foundry's download rate limit)"
+    # Check if the volume has been initialized (has Data or Config directories)
+    if docker run --rm -v "${FULL_VOLUME_NAME}:/data" alpine test -d /data/Data 2>/dev/null; then
+        echo "[OK] Foundry VTT is already initialized"
+        echo "     Container will use existing installation"
     else
-        echo "[INFO] Foundry VTT will be downloaded from foundryvtt.com"
-        echo "      Note: Foundry limits downloads per account per day"
-        echo "      Your credentials will be used to download version: $foundry_docker_tag"
+        echo "[INFO] First container startup - Foundry will initialize"
+        echo "      This is a one-time setup, not a redownload"
     fi
 else
-    echo "[INFO] First installation - Foundry VTT will be downloaded from foundryvtt.com"
-    echo "      Note: Foundry limits downloads per account per day"
-    echo "      Your credentials will be used to download version: $foundry_docker_tag"
+    echo "[INFO] First installation - setting up Foundry VTT"
+    echo "      Container will initialize on first startup"
 fi
 
 # Check if Foundry Docker image needs updating

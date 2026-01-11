@@ -31,8 +31,14 @@ if [ ! -f .env ]; then
     exit 1
 fi
 
+# Function to parse .env values robustly
+parse_env_value() {
+    local key=$1
+    grep -E "^${key}=" .env | cut -d'=' -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed 's/#.*//'
+}
+
 # Load port from .env
-FOUNDRY_PORT=$(grep -E "^FOUNDRY_PORT=" .env | cut -d'=' -f2)
+FOUNDRY_PORT=$(parse_env_value "FOUNDRY_PORT")
 FOUNDRY_PORT=${FOUNDRY_PORT:-80}
 
 echo "Starting containers..."
@@ -40,14 +46,30 @@ docker compose up -d
 
 echo
 echo "Waiting for containers to start..."
-sleep 5
+
+# Poll for container readiness (max 30 seconds)
+max_wait=30
+waited=0
+while [ $waited -lt $max_wait ]; do
+    if docker compose ps 2>/dev/null | grep -q "foundry.*Up" && docker compose ps 2>/dev/null | grep -q "caddy.*Up"; then
+        echo
+        echo "[OK] Containers are ready"
+        break
+    fi
+    echo -n "."
+    sleep 1
+    waited=$((waited + 1))
+done
+
+if [ $waited -ge $max_wait ]; then
+    echo
+    echo "[WARN] Containers may still be starting (waited ${max_wait}s)"
+    echo "  Check status with: docker compose ps"
+fi
 
 # Check container status
 echo
 echo "Checking container status..."
-
-foundry_status=$(docker compose ps --format json | grep -o '"State":"[^"]*"' | head -1 | cut -d'"' -f4)
-caddy_status=$(docker compose ps --format json | grep -o '"State":"[^"]*"' | tail -1 | cut -d'"' -f4)
 
 if docker compose ps | grep -q "foundry.*Up"; then
     echo "[OK] Foundry container is running"
@@ -65,8 +87,8 @@ else
     exit 1
 fi
 
-# Check if port is listening
-if docker compose ps | grep -q "0.0.0.0:${FOUNDRY_PORT}->80"; then
+# Check if port is listening (supports IPv4 and IPv6)
+if docker compose ps | grep -E -q "(0\.0\.0\.0|:::|:)${FOUNDRY_PORT}->80"; then
     echo "[OK] Caddy is listening on port ${FOUNDRY_PORT}"
 else
     echo "[WARN] Could not verify port ${FOUNDRY_PORT} is exposed"
@@ -75,7 +97,7 @@ fi
 echo
 echo "=== Foundry VTT Started ==="
 echo
-FOUNDRY_HOSTNAME=$(grep -E "^FOUNDRY_HOSTNAME=" .env | cut -d'=' -f2)
+FOUNDRY_HOSTNAME=$(parse_env_value "FOUNDRY_HOSTNAME")
 echo "Access Foundry at: http://${FOUNDRY_HOSTNAME}:${FOUNDRY_PORT}"
 echo
 echo "View logs with:"

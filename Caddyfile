@@ -1,3 +1,0 @@
-:80 {
-    reverse_proxy foundry:30000
-}

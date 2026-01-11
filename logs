@@ -1,6 +1,23 @@
 #!/bin/bash
+set -e
 
 echo "=== Foundry VTT Logs ==="
+
+# Check for docker compose
+if ! docker compose version &> /dev/null; then
+    if ! command -v docker-compose &> /dev/null; then
+        echo "[ERROR] Docker Compose is not installed"
+        exit 1
+    fi
+fi
+
+# Check if docker daemon is running
+if ! docker info &> /dev/null; then
+    echo "[ERROR] Docker daemon is not running"
+    echo "  Start it with: sudo systemctl start docker"
+    exit 1
+fi
+
 echo "Press Ctrl+C to exit"
 echo
 

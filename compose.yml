@@ -1,7 +1,7 @@
 services:
   foundry-init:
     image: alpine:3.20
-    command: ["sh", "-c", "mkdir -p /data && chown -R 1000:1000 /data"]
+    command: ["sh", "-c", "mkdir -p /data && chown -R ${FOUNDRY_UID:-1000}:${FOUNDRY_GID:-1000} /data"]
     volumes:
       - foundry_data:/data
     restart: "no"
@@ -15,22 +15,17 @@ services:
         condition: service_completed_successfully
     env_file:
       - .env
-    expose:
-      - "30000"
+    ports:
+      - "127.0.0.1:30000:30000"
     volumes:
       - foundry_data:/data
     restart: unless-stopped
-
-  caddy:
-    image: caddy:2-alpine
-    container_name: caddy
-    depends_on:
-      - foundry
-    ports:
-      - "${FOUNDRY_PORT:-80}:80"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:30000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
 volumes:
   foundry_data:

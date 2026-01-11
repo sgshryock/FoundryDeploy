@@ -4,6 +4,23 @@ set -e
 REPO_URL="https://github.com/sgshryock/FoundryDeploy.git"
 INSTALL_DIR="FoundryDeploy"
 
+# Cleanup function for error handling
+cleanup_on_error() {
+    local exit_code=$?
+    if [ $exit_code -ne 0 ]; then
+        echo
+        echo "[ERROR] Setup failed (exit code: $exit_code)"
+        if [ -f .env.incomplete ]; then
+            rm -f .env.incomplete
+            echo "Cleaned up incomplete configuration"
+        fi
+        echo "Please fix the issue and run setup again"
+    fi
+    exit $exit_code
+}
+
+trap cleanup_on_error EXIT ERR
+
 echo "=== Foundry VTT Deployment Setup ==="
 echo
 
@@ -25,6 +42,8 @@ echo
 
 check_command git || missing=1
 check_command docker || missing=1
+check_command nginx || missing=1
+check_command openssl || missing=1
 docker compose version &>/dev/null || {
     if command -v docker-compose &> /dev/null; then
         echo "[OK] docker-compose (legacy) is installed"
@@ -41,17 +60,17 @@ if [ $missing -eq 1 ]; then
     echo
     echo "  # Debian/Ubuntu:"
     echo "  sudo apt update"
-    echo "  sudo apt install -y git docker.io docker-compose-v2"
+    echo "  sudo apt install -y git docker.io docker-compose-v2 nginx openssl"
     echo "  sudo usermod -aG docker \$USER"
     echo "  # Log out and back in for group changes to take effect"
     echo
     echo "  # Fedora:"
-    echo "  sudo dnf install -y git docker docker-compose"
+    echo "  sudo dnf install -y git docker docker-compose nginx openssl"
     echo "  sudo systemctl enable --now docker"
     echo "  sudo usermod -aG docker \$USER"
     echo
     echo "  # Arch:"
-    echo "  sudo pacman -S git docker docker-compose"
+    echo "  sudo pacman -S git docker docker-compose nginx openssl"
     echo "  sudo systemctl enable --now docker"
     echo "  sudo usermod -aG docker \$USER"
     echo
@@ -68,13 +87,326 @@ echo "[OK] Docker daemon is running"
 
 echo
 
-# Clone repo if we're not already in it
-if [ ! -f "compose.yml" ]; then
+# Determine if we need to clone
+if [ -f "compose.yml" ] && [ -f "setup" ]; then
+    # We're already in the repo
+    echo "[OK] Already in FoundryDeploy directory"
+elif [ -d "$INSTALL_DIR" ]; then
+    # Directory exists, check if it's the repo
+    if [ -f "$INSTALL_DIR/compose.yml" ]; then
+        echo "[OK] FoundryDeploy directory exists"
+        cd "$INSTALL_DIR"
+    else
+        echo "[ERROR] Directory '$INSTALL_DIR' exists but is not FoundryDeploy repo"
+        exit 1
+    fi
+else
+    # Clone fresh
     echo "Cloning FoundryDeploy repository..."
     git clone "$REPO_URL" "$INSTALL_DIR"
     cd "$INSTALL_DIR"
-    echo
 fi
+
+echo
+
+# Ensure operational scripts exist
+echo "Checking operational scripts..."
+
+if [ ! -f "start" ]; then
+    echo "Creating start script..."
+    cat > start << 'STARTEOF'
+#!/bin/bash
+set -e
+
+echo "=== Starting Foundry VTT ==="
+echo
+
+# Check for docker
+if ! command -v docker &> /dev/null; then
+    echo "[ERROR] Docker is not installed"
+    exit 1
+fi
+
+# Check if docker daemon is running
+if ! docker info &> /dev/null; then
+    echo "[ERROR] Docker daemon is not running"
+    echo "  Start it with: sudo systemctl start docker"
+    exit 1
+fi
+
+# Check for docker compose
+if ! docker compose version &> /dev/null; then
+    if ! command -v docker-compose &> /dev/null; then
+        echo "[ERROR] Docker Compose is not installed"
+        exit 1
+    fi
+fi
+
+# Check for .env file
+if [ ! -f .env ]; then
+    echo "[ERROR] No .env file found. Run ./setup first or copy .env.example to .env"
+    exit 1
+fi
+
+# Function to parse .env values robustly
+parse_env_value() {
+    local key=$1
+    grep -E "^${key}=" .env | cut -d'=' -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed 's/#.*//'
+}
+
+# Start nginx
+echo "Starting nginx..."
+if sudo systemctl start nginx 2>/dev/null; then
+    echo "[OK] nginx started"
+else
+    echo "[WARN] Could not start nginx (may already be running)"
+fi
+
+# Start containers
+echo "Starting Foundry container..."
+docker compose up -d
+
+echo
+echo "Waiting for Foundry to start..."
+
+# Poll for container readiness (max 30 seconds)
+max_wait=30
+waited=0
+while [ $waited -lt $max_wait ]; do
+    if docker compose ps 2>/dev/null | grep -q "foundry.*Up"; then
+        echo
+        echo "[OK] Foundry container is ready"
+        break
+    fi
+    echo -n "."
+    sleep 1
+    waited=$((waited + 1))
+done
+
+if [ $waited -ge $max_wait ]; then
+    echo
+    echo "[WARN] Foundry may still be starting (waited ${max_wait}s)"
+    echo "  Check status with: docker compose ps"
+fi
+
+# Check container status
+echo
+echo "Checking services..."
+
+if docker compose ps | grep -q "foundry.*Up"; then
+    echo "[OK] Foundry container is running"
+else
+    echo "[ERROR] Foundry container is not running"
+    echo "  Check logs with: docker compose logs foundry"
+    exit 1
+fi
+
+if systemctl is-active --quiet nginx; then
+    echo "[OK] nginx is running"
+else
+    echo "[ERROR] nginx is not running"
+    echo "  Start it with: sudo systemctl start nginx"
+    exit 1
+fi
+
+echo
+echo "=== Foundry VTT Started ==="
+echo
+FOUNDRY_HOSTNAME=$(parse_env_value "FOUNDRY_HOSTNAME")
+echo "Access Foundry at: https://${FOUNDRY_HOSTNAME}"
+echo
+echo "View logs with:"
+echo "  ./logs"
+echo
+STARTEOF
+    chmod +x start
+    echo "[OK] start script created"
+fi
+
+if [ ! -f "stop" ]; then
+    echo "Creating stop script..."
+    cat > stop << 'STOPEOF'
+#!/bin/bash
+set -e
+
+echo "=== Stopping Foundry VTT ==="
+echo
+
+# Check for docker compose
+if ! docker compose version &> /dev/null; then
+    if ! command -v docker-compose &> /dev/null; then
+        echo "[ERROR] Docker Compose is not installed"
+        exit 1
+    fi
+fi
+
+# Check if containers are running
+if ! docker compose ps --quiet 2>/dev/null | grep -q .; then
+    echo "No containers are running."
+    exit 0
+fi
+
+echo "Stopping containers..."
+docker compose down
+
+echo
+echo "=== Foundry VTT Stopped ==="
+echo
+echo "Data is preserved in the Docker volume."
+echo "To remove all data, run: docker compose down -v"
+echo
+STOPEOF
+    chmod +x stop
+    echo "[OK] stop script created"
+fi
+
+if [ ! -f "logs" ]; then
+    echo "Creating logs script..."
+    cat > logs << 'LOGSEOF'
+#!/bin/bash
+set -e
+
+echo "=== Foundry VTT Logs ==="
+
+# Check for docker compose
+if ! docker compose version &> /dev/null; then
+    if ! command -v docker-compose &> /dev/null; then
+        echo "[ERROR] Docker Compose is not installed"
+        exit 1
+    fi
+fi
+
+# Check if docker daemon is running
+if ! docker info &> /dev/null; then
+    echo "[ERROR] Docker daemon is not running"
+    echo "  Start it with: sudo systemctl start docker"
+    exit 1
+fi
+
+echo "Press Ctrl+C to exit"
+echo
+
+docker compose logs -f
+LOGSEOF
+    chmod +x logs
+    echo "[OK] logs script created"
+fi
+
+if [ ! -f "remove" ]; then
+    echo "Creating remove script..."
+    cat > remove << 'REMOVEEOF'
+#!/bin/bash
+set -e
+
+echo "=== Remove Foundry VTT Installation ==="
+echo
+echo "This will:"
+echo "  - Stop all Foundry containers"
+echo "  - Remove all containers and networks"
+echo "  - Remove the FoundryDeploy directory"
+echo
+echo "This will NOT:"
+echo "  - Remove Docker, git, or other dependencies"
+echo "  - Remove the setup script"
+echo
+read -p "Do you want to keep your Foundry data (worlds, modules, etc.)? [Y/n]: " keep_data
+keep_data=${keep_data:-Y}
+
+if [[ "$keep_data" =~ ^[Yy]$ ]]; then
+    echo "[INFO] Your Foundry data will be preserved in Docker volumes"
+    remove_volumes=false
+else
+    echo "[WARN] Your Foundry data will be PERMANENTLY DELETED"
+    read -p "Are you absolutely sure? Type 'DELETE' to confirm: " confirm
+    if [ "$confirm" != "DELETE" ]; then
+        echo "Removal cancelled."
+        exit 0
+    fi
+    remove_volumes=true
+fi
+
+echo
+
+# Get the parent directory (where we'll return to after deletion)
+PARENT_DIR=$(dirname "$(pwd)")
+INSTALL_DIR=$(basename "$(pwd)")
+
+echo "Stopping containers..."
+if docker compose ps --quiet 2>/dev/null | grep -q .; then
+    docker compose down
+    echo "[OK] Containers stopped and removed"
+else
+    echo "[INFO] No running containers found"
+fi
+
+if [ "$remove_volumes" = true ]; then
+    echo "Removing data volumes..."
+    docker compose down -v 2>/dev/null || true
+    echo "[OK] Data volumes removed"
+fi
+
+echo "Removing FoundryDeploy directory..."
+cd "$PARENT_DIR"
+rm -rf "$INSTALL_DIR"
+echo "[OK] FoundryDeploy directory removed"
+
+echo
+echo "=== Removal Complete ==="
+echo
+if [ "$remove_volumes" = false ]; then
+    echo "Your Foundry data is preserved in Docker volumes."
+    echo "To remove it later, run: docker volume rm foundrydeploy_foundry_data"
+fi
+echo
+echo "To reinstall, run the setup script again."
+echo
+REMOVEEOF
+    chmod +x remove
+    echo "[OK] remove script created"
+fi
+
+echo
+
+# Validation functions
+validate_non_empty() {
+    local value=$1
+    local field_name=$2
+    if [ -z "$value" ]; then
+        echo "[ERROR] $field_name cannot be empty"
+        return 1
+    fi
+    return 0
+}
+
+validate_port() {
+    local port=$1
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+        echo "[ERROR] Port must be a number between 1 and 65535"
+        return 1
+    fi
+    return 0
+}
+
+validate_hostname() {
+    local hostname=$1
+    # Allow hostname, FQDN, or IP address
+    if ! [[ "$hostname" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$ ]] && \
+       ! [[ "$hostname" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+        echo "[ERROR] Invalid hostname format"
+        return 1
+    fi
+    return 0
+}
+
+validate_version() {
+    local version=$1
+    # Allow empty (defaults to release), "release", "latest", or numeric
+    if [ -n "$version" ] && ! [[ "$version" =~ ^(release|latest|[0-9]+)$ ]]; then
+        echo "[ERROR] Version must be 'release', 'latest', or a number (e.g., 12, 13)"
+        return 1
+    fi
+    return 0
+}
 
 # Prompt for configuration
 echo "=== Configuration ==="
@@ -83,36 +415,79 @@ echo "Enter your Foundry VTT account credentials."
 echo "These are used to download Foundry from your account."
 echo
 
-read -p "Foundry Username: " foundry_username
-read -sp "Foundry Password: " foundry_password
-echo
+while true; do
+    read -p "Foundry Username: " foundry_username
+    validate_non_empty "$foundry_username" "Username" && break
+done
+
+while true; do
+    read -sp "Foundry Password: " foundry_password
+    echo
+    validate_non_empty "$foundry_password" "Password" && break
+done
 
 echo
-read -p "Foundry Admin Key (password for the web UI): " foundry_admin_key
+while true; do
+    read -p "Foundry Admin Key (password for the web UI): " foundry_admin_key
+    validate_non_empty "$foundry_admin_key" "Admin key" && break
+done
 
 echo
 echo "Foundry Version:"
 echo "  - Press Enter for latest stable"
 echo "  - Or enter a major version number (e.g., 12, 13)"
-read -p "Version [latest]: " foundry_docker_tag
-if [ -z "$foundry_docker_tag" ] || [ "$foundry_docker_tag" = "latest" ]; then
-    foundry_docker_tag="release"
-fi
+while true; do
+    read -p "Version [latest]: " foundry_docker_tag
+    if [ -z "$foundry_docker_tag" ] || [ "$foundry_docker_tag" = "latest" ]; then
+        foundry_docker_tag="release"
+    fi
+    validate_version "$foundry_docker_tag" && break
+done
 
 echo
-read -p "Hostname for this server (e.g., myserver.local): " foundry_hostname
-
-read -p "Port to expose Foundry on [80]: " foundry_port
-foundry_port=${foundry_port:-80}
+while true; do
+    read -p "Hostname for this server (e.g., myserver.local): " foundry_hostname
+    validate_hostname "$foundry_hostname" && break
+done
 
 read -p "Timezone [America/New_York]: " timezone
 timezone=${timezone:-America/New_York}
 
+# Check for existing .env file
+if [ -f .env ]; then
+    echo
+    echo "[WARNING] An .env file already exists."
+    echo "Options:"
+    echo "  1) Overwrite (current file will be backed up to .env.backup.TIMESTAMP)"
+    echo "  2) Abort setup"
+    read -p "Choose [1/2]: " overwrite_choice
+
+    case $overwrite_choice in
+        1)
+            backup_file=".env.backup.$(date +%Y%m%d_%H%M%S)"
+            cp .env "$backup_file"
+            echo "[OK] Existing .env backed up to $backup_file"
+            ;;
+        2)
+            echo "Setup aborted."
+            exit 0
+            ;;
+        *)
+            echo "Invalid choice. Aborting."
+            exit 1
+            ;;
+    esac
+fi
+
+# Detect UID/GID for proper file permissions in Docker
+foundry_uid=$(id -u)
+foundry_gid=$(id -g)
+
 # Create .env file
 echo
-echo "Creating .env file..."
+echo "Creating configuration..."
 
-cat > .env << EOF
+cat > .env.incomplete << EOF
 # Foundry account credentials
 FOUNDRY_USERNAME=$foundry_username
 FOUNDRY_PASSWORD=$foundry_password
@@ -132,11 +507,110 @@ TZ=$timezone
 # Hostname for the Foundry server
 FOUNDRY_HOSTNAME=$foundry_hostname
 
-# Port to expose Foundry on
-FOUNDRY_PORT=$foundry_port
+# User/Group IDs for file permissions
+FOUNDRY_UID=$foundry_uid
+FOUNDRY_GID=$foundry_gid
 EOF
 
-echo "[OK] .env file created"
+# Move to final location and set permissions
+mv .env.incomplete .env
+chmod 600 .env
+echo "[OK] .env file created with secure permissions (600)"
+
+#Configure nginx reverse proxy with HTTPS
+echo
+echo "=== Configuring nginx with HTTPS ==="
+echo
+
+# Create nginx certs directory if it doesn't exist
+sudo mkdir -p /etc/nginx/certs
+
+# Generate self-signed SSL certificate if it doesn't exist
+if [ ! -f /etc/nginx/certs/foundry.crt ] || [ ! -f /etc/nginx/certs/foundry.key ]; then
+    echo "Generating self-signed SSL certificate..."
+    sudo openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+        -keyout /etc/nginx/certs/foundry.key \
+        -out /etc/nginx/certs/foundry.crt \
+        -subj "/C=US/ST=State/L=City/O=Organization/CN=$foundry_hostname" \
+        2>/dev/null
+    echo "[OK] SSL certificate generated"
+else
+    echo "[OK] Using existing SSL certificate"
+fi
+
+# Create nginx configuration
+echo "Creating nginx configuration..."
+sudo tee /etc/nginx/sites-available/foundry >/dev/null << NGINXEOF
+server {
+  listen 80 default_server;
+  server_name _;
+  return 301 https://\$host\$request_uri;
+}
+
+server {
+  listen 443 ssl default_server;
+  server_name _;
+
+  ssl_certificate     /etc/nginx/certs/foundry.crt;
+  ssl_certificate_key /etc/nginx/certs/foundry.key;
+
+  client_max_body_size 300m;
+
+  location / {
+    proxy_pass http://127.0.0.1:30000;
+    proxy_http_version 1.1;
+
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+  }
+}
+NGINXEOF
+
+# Enable the site
+sudo ln -sf /etc/nginx/sites-available/foundry /etc/nginx/sites-enabled/foundry
+
+# Remove other nginx sites that might conflict
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo rm -f /etc/nginx/sites-enabled/canticle.local
+
+# Test nginx configuration
+if sudo nginx -t 2>/dev/null; then
+    echo "[OK] nginx configuration valid"
+else
+    echo "[ERROR] nginx configuration invalid"
+    exit 1
+fi
+
+# Restart nginx
+echo "Starting nginx..."
+sudo systemctl restart nginx
+sudo systemctl enable nginx
+echo "[OK] nginx configured and running"
+
+# Check if Foundry is already downloaded
+echo
+if docker volume ls | grep -q "foundry_data"; then
+    echo "[INFO] Checking for existing Foundry installation..."
+
+    # Check if the volume has Foundry files
+    if docker run --rm -v foundry_data:/data alpine test -f /data/resources/app/main.mjs 2>/dev/null; then
+        echo "[OK] Foundry VTT is already installed, will NOT download again"
+        echo "     (This avoids hitting Foundry's download rate limit)"
+    else
+        echo "[INFO] Foundry VTT will be downloaded from foundryvtt.com"
+        echo "      Note: Foundry limits downloads per account per day"
+        echo "      Your credentials will be used to download version: $foundry_docker_tag"
+    fi
+else
+    echo "[INFO] First installation - Foundry VTT will be downloaded from foundryvtt.com"
+    echo "      Note: Foundry limits downloads per account per day"
+    echo "      Your credentials will be used to download version: $foundry_docker_tag"
+fi
 
 # Start the containers
 echo
@@ -150,8 +624,13 @@ echo "=== Setup Complete ==="
 echo
 echo "Foundry VTT is now starting. It may take a few minutes to download and initialize."
 echo
-echo "Access Foundry at: http://$foundry_hostname:$foundry_port"
+echo "Access Foundry at: https://$foundry_hostname"
+echo "  (Note: You'll see a security warning due to the self-signed certificate)"
+echo "  (Click 'Advanced' and 'Proceed' to accept the certificate)"
 echo
-echo "View logs with:"
-echo "  docker compose logs -f"
+echo "Manage your server with:"
+echo "  ./start   - Start the server"
+echo "  ./stop    - Stop the server"
+echo "  ./logs    - View server logs"
+echo "  ./remove  - Uninstall Foundry VTT"
 echo

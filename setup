@@ -304,9 +304,10 @@ echo "This will:"
 echo "  - Stop all Foundry containers"
 echo "  - Remove all containers and networks"
 echo "  - Remove the FoundryDeploy directory"
+echo "  - Optionally remove nginx configuration and SSL certificates"
 echo
 echo "This will NOT:"
-echo "  - Remove Docker, git, or other dependencies"
+echo "  - Remove Docker, git, nginx, or other dependencies"
 echo "  - Remove the setup script"
 echo
 read -p "Do you want to keep your Foundry data (worlds, modules, etc.)? [Y/n]: " keep_data
@@ -343,6 +344,28 @@ if [ "$remove_volumes" = true ]; then
     echo "Removing data volumes..."
     docker compose down -v 2>/dev/null || true
     echo "[OK] Data volumes removed"
+fi
+
+# Ask about nginx configuration removal
+echo
+read -p "Do you want to remove nginx configuration and SSL certificates? [Y/n]: " remove_nginx
+remove_nginx=${remove_nginx:-Y}
+
+if [[ "$remove_nginx" =~ ^[Yy]$ ]]; then
+    echo "Removing nginx configuration..."
+    sudo rm -f /etc/nginx/sites-enabled/foundry
+    sudo rm -f /etc/nginx/sites-available/foundry
+    sudo rm -f /etc/nginx/certs/foundry.crt
+    sudo rm -f /etc/nginx/certs/foundry.key
+
+    # Reload nginx if it's running
+    if systemctl is-active --quiet nginx 2>/dev/null; then
+        sudo systemctl reload nginx 2>/dev/null || true
+    fi
+
+    echo "[OK] nginx configuration removed"
+else
+    echo "[INFO] nginx configuration kept (you can manually remove it later)"
 fi
 
 echo "Removing FoundryDeploy directory..."
@@ -445,10 +468,27 @@ while true; do
 done
 
 echo
+# Auto-detect system hostname for mDNS
+system_hostname=$(hostname)
+echo "Hostname for this server:"
+echo "  - Detected system hostname: $system_hostname"
+echo "  - This hostname will work automatically via mDNS (no DNS setup needed)"
+echo "  - Or enter a different hostname (will require DNS/Pi-hole configuration)"
+echo
 while true; do
-    read -p "Hostname for this server (e.g., myserver.local): " foundry_hostname
+    read -p "Hostname [$system_hostname]: " foundry_hostname
+    foundry_hostname=${foundry_hostname:-$system_hostname}
     validate_hostname "$foundry_hostname" && break
 done
+
+# Warn if using custom hostname
+if [ "$foundry_hostname" != "$system_hostname" ]; then
+    echo
+    echo "[NOTE] You chose '$foundry_hostname' instead of '$system_hostname'"
+    echo "       This will require DNS configuration (like Pi-hole) to resolve."
+    echo "       Without DNS, you'll need to use the server's IP address."
+    echo
+fi
 
 read -p "Timezone [America/New_York]: " timezone
 timezone=${timezone:-America/New_York}

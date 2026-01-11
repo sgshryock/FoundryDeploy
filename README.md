@@ -10,6 +10,8 @@ Run your own Foundry VTT server on a Linux machine.
 - 10 GB free disk space
 - Docker 20.10+
 - Docker Compose v2+
+- nginx (installed by setup script)
+- openssl (installed by setup script)
 - A Foundry VTT license and account
 
 ### Recommended
@@ -50,11 +52,26 @@ The setup script will:
 ./logs
 ```
 
+**Uninstall Foundry:**
+```bash
+./remove
+```
+This will prompt you to:
+- Keep or delete your Foundry data (worlds, modules, etc.)
+- Keep or remove nginx configuration and SSL certificates
+
 ## Accessing Foundry
 
 Open your web browser and go to the address shown after running `./start`.
 
-Example: `http://myserver.local`
+Example: `https://myserver.local`
+
+**Note:** You'll see a security warning due to the self-signed SSL certificate. Click "Advanced" and "Proceed" to accept the certificate. This is normal for local network servers.
+
+**Hostname Options:**
+- **System hostname (recommended)**: Uses mDNS, works automatically on local network
+- **Custom hostname**: Requires DNS configuration (like Pi-hole) to resolve
+- **IP address**: Always works, but harder to remember (e.g., `https://192.168.1.100`)
 
 ---
 
@@ -140,13 +157,13 @@ crontab -e
 
 ## Firewall Configuration
 
+This setup uses standard HTTP (port 80) and HTTPS (port 443) ports.
+
 ### Ubuntu/Debian (UFW)
 
 ```bash
-# Allow HTTP
+# Allow HTTP and HTTPS
 sudo ufw allow 80/tcp
-
-# For HTTPS
 sudo ufw allow 443/tcp
 
 # Enable firewall
@@ -156,25 +173,11 @@ sudo ufw enable
 ### Fedora/RHEL (firewalld)
 
 ```bash
-# Allow HTTP
+# Allow HTTP and HTTPS
 sudo firewall-cmd --permanent --add-service=http
-
-# For HTTPS
 sudo firewall-cmd --permanent --add-service=https
 
 # Reload firewall
-sudo firewall-cmd --reload
-```
-
-### Custom Port
-
-If you changed `FOUNDRY_PORT` from 80:
-```bash
-# UFW
-sudo ufw allow 8080/tcp
-
-# firewalld
-sudo firewall-cmd --permanent --add-port=8080/tcp
 sudo firewall-cmd --reload
 ```
 
@@ -182,67 +185,75 @@ sudo firewall-cmd --reload
 
 ## HTTPS Setup
 
-### Option 1: Automatic HTTPS with Caddy (Recommended)
+**HTTPS is automatically configured during setup.** The setup script:
+- Installs nginx as a reverse proxy
+- Generates a self-signed SSL certificate (valid for 10 years)
+- Configures nginx to redirect HTTP to HTTPS
+- Exposes Foundry on ports 80 (HTTP) and 443 (HTTPS)
 
-If you have a public domain pointing to your server, Caddy can automatically obtain and renew SSL certificates:
+### Self-Signed Certificates (Default)
 
-1. Update your `Caddyfile`:
-```
-your-domain.com {
-    reverse_proxy foundry:30000
-}
-```
+The default setup uses self-signed SSL certificates, which provide encryption but will trigger browser security warnings.
 
-2. Open port 443 in your firewall:
+**Pros:**
+- Works immediately, no additional setup
+- Free and automatic
+- Perfect for local network use
+- Provides encryption for sensitive data
+
+**Cons:**
+- Browser security warnings (need to click "Advanced" → "Proceed")
+- Not trusted by browsers automatically
+- Not suitable for public internet-facing servers
+
+**Accept the certificate warning:**
+1. Visit `https://yourserver.local`
+2. Click "Advanced" or "More information"
+3. Click "Proceed to yourserver.local (unsafe)" or "Accept the Risk"
+4. The warning won't appear again on that device
+
+### Using Your Own SSL Certificates (Optional)
+
+If you have valid SSL certificates (e.g., from Let's Encrypt), you can replace the self-signed certificates:
+
+1. Copy your certificates to the server:
 ```bash
-sudo ufw allow 443/tcp
+sudo cp your-cert.crt /etc/nginx/certs/foundry.crt
+sudo cp your-cert.key /etc/nginx/certs/foundry.key
 ```
 
-3. Restart:
+2. Set proper permissions:
 ```bash
-./stop && ./start
+sudo chmod 644 /etc/nginx/certs/foundry.crt
+sudo chmod 600 /etc/nginx/certs/foundry.key
 ```
 
-Caddy will automatically obtain certificates from Let's Encrypt.
-
-### Option 2: Manual Certificates
-
-If you have your own SSL certificates:
-
-1. Create a `certs` directory and place your `cert.pem` and `key.pem` files in it
-
-2. Update `Caddyfile`:
-```
-:443 {
-    tls /etc/caddy/cert.pem /etc/caddy/key.pem
-    reverse_proxy foundry:30000
-}
-```
-
-3. Update `compose.yml` to mount certificates:
-```yaml
-caddy:
-  volumes:
-    - ./Caddyfile:/etc/caddy/Caddyfile:ro
-    - ./certs:/etc/caddy:ro
-  ports:
-    - "${FOUNDRY_PORT:-80}:80"
-    - "443:443"
-```
-
-4. Restart:
+3. Reload nginx:
 ```bash
-./stop && ./start
+sudo systemctl reload nginx
 ```
 
-### Option 3: HTTP Only (Current Default)
+### Obtaining Let's Encrypt Certificates
 
-The default configuration uses HTTP only, which is suitable for:
-- Local network use only
-- When behind a separate reverse proxy or load balancer
-- Testing and development environments
+For a public domain with automatic certificate renewal:
 
-**Note:** For internet-facing servers with sensitive data, HTTPS is strongly recommended.
+1. Install certbot:
+```bash
+# Ubuntu/Debian
+sudo apt install certbot python3-certbot-nginx
+
+# Fedora
+sudo dnf install certbot python3-certbot-nginx
+```
+
+2. Obtain certificate (requires domain pointing to server):
+```bash
+sudo certbot --nginx -d your-domain.com
+```
+
+3. Follow the prompts. Certbot will automatically configure nginx and set up renewal.
+
+**Note:** Let's Encrypt requires a public domain and port 80 accessible from the internet.
 
 ---
 
@@ -261,7 +272,9 @@ sudo systemctl start docker
 ./logs
 # Or specific container
 docker compose logs foundry
-docker compose logs caddy
+
+# Check nginx logs
+sudo journalctl -u nginx -n 50
 ```
 
 **Check disk space:**
@@ -284,13 +297,23 @@ sudo firewall-cmd --list-all  # Fedora/RHEL
 
 **Test from server:**
 ```bash
-curl http://localhost:${FOUNDRY_PORT}
+# Test Foundry container directly
+curl http://localhost:30000
+
+# Test nginx HTTPS
+curl -k https://localhost
+
+# Check nginx status
+sudo systemctl status nginx
 ```
 
 **Check port binding:**
 ```bash
 docker compose ps
-# Look for "0.0.0.0:80->80" or similar in output
+# Look for "127.0.0.1:30000->30000" in output
+
+# Check nginx is listening on 80/443
+sudo ss -tulpn | grep nginx
 ```
 
 ### Permission Errors
@@ -317,16 +340,29 @@ grep FOUNDRY_USERNAME .env
 
 ### Port Already in Use
 
-**Find what's using the port:**
+**Find what's using ports 80 or 443:**
 ```bash
 sudo lsof -i :80
+sudo lsof -i :443
 # Or
 sudo ss -tulpn | grep :80
+sudo ss -tulpn | grep :443
 ```
 
-**Change Foundry port:**
-1. Edit `.env` and set `FOUNDRY_PORT=8080`
-2. Restart: `./stop && ./start`
+**Common conflicts:**
+- Apache or other web servers
+- Another nginx instance
+
+**Solution:**
+Stop the conflicting service:
+```bash
+# For Apache
+sudo systemctl stop apache2
+
+# For other nginx instances
+sudo systemctl stop nginx
+# Then run ./start which will restart nginx with Foundry config
+```
 
 ### Docker Compose Command Not Found
 
@@ -367,11 +403,18 @@ rm backups/foundry-backup-YYYYMMDD.tar.gz
 
 ### Running on Specific Network Interface
 
-Edit `compose.yml` to bind to a specific IP:
-```yaml
-caddy:
-  ports:
-    - "192.168.1.100:${FOUNDRY_PORT:-80}:80"
+Edit `/etc/nginx/sites-available/foundry` to bind to a specific IP:
+```nginx
+server {
+  listen 192.168.1.100:80;
+  listen 192.168.1.100:443 ssl;
+  # ... rest of configuration
+}
+```
+
+Then reload nginx:
+```bash
+sudo systemctl reload nginx
 ```
 
 ### Resource Limits
@@ -388,6 +431,15 @@ foundry:
         memory: 1G
 ```
 
-### Custom Caddy Configuration
+### Custom nginx Configuration
 
-For more advanced reverse proxy features, edit the `Caddyfile`. See [Caddy documentation](https://caddyserver.com/docs/) for details.
+For more advanced reverse proxy features, edit `/etc/nginx/sites-available/foundry`. After making changes:
+```bash
+# Test configuration
+sudo nginx -t
+
+# Reload if valid
+sudo systemctl reload nginx
+```
+
+See [nginx documentation](https://nginx.org/en/docs/) for details.

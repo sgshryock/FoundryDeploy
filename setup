@@ -287,6 +287,18 @@ validate_version() {
     return 0
 }
 
+# Ensure we're in the FoundryDeploy directory before checking for .env
+# This handles both running from ~/setup and ~/FoundryDeploy/setup
+INSTALL_DIR=$(basename "$(pwd)")
+if [ "$INSTALL_DIR" != "FoundryDeploy" ]; then
+    if [ -d "FoundryDeploy" ]; then
+        cd FoundryDeploy
+    else
+        echo "[ERROR] Not in FoundryDeploy directory and can't find it"
+        exit 1
+    fi
+fi
+
 # Check for existing .env file
 if [ -f .env ]; then
     echo

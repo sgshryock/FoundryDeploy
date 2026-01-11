@@ -789,20 +789,28 @@ echo
 VOLUME_NAME=$(docker compose config --format json | grep -o '"foundry_data"' | head -1 | tr -d '"' || echo "foundry_data")
 FULL_VOLUME_NAME="$(basename $(pwd) | tr '[:upper:]' '[:lower:]')_${VOLUME_NAME}"
 
+# Get version from .env if it exists
+if [ -f .env ]; then
+    CURRENT_VERSION=$(grep -E "^FOUNDRY_DOCKER_TAG=" .env | cut -d'=' -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed 's/#.*//')
+    VERSION_MSG="version: ${CURRENT_VERSION:-release}"
+else
+    VERSION_MSG="selected version"
+fi
+
 if docker volume ls --format '{{.Name}}' | grep -q "^${FULL_VOLUME_NAME}$"; then
     echo "[INFO] Checking for existing Foundry installation..."
 
     # Check if the volume has been initialized (has Data or Config directories)
     if docker run --rm -v "${FULL_VOLUME_NAME}:/data" alpine test -d /data/Data 2>/dev/null; then
         echo "[OK] Foundry VTT is already initialized"
-        echo "     Container will use existing installation"
+        echo "     Already using ${VERSION_MSG}"
     else
         echo "[INFO] First container startup - Foundry will initialize"
-        echo "      This is a one-time setup, not a redownload"
+        echo "      Using ${VERSION_MSG}"
     fi
 else
     echo "[INFO] First installation - setting up Foundry VTT"
-    echo "      Container will initialize on first startup"
+    echo "      Will use ${VERSION_MSG}"
 fi
 
 # Check if Foundry Docker image needs updating

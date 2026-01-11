@@ -2,6 +2,9 @@
 
 Run your own Foundry VTT server on a Linux machine.
 
+> **⚠️ Local Network Only**
+> This setup is designed for **local network use only** (home networks, LANs). It uses self-signed SSL certificates and stores credentials in local files with standard permissions. Do not expose this server directly to the public internet without additional security hardening (proper SSL certificates, firewall configuration, VPN access, etc.).
+
 ## Requirements
 
 ### Minimum

@@ -35,6 +35,12 @@ The setup script will:
 - Ask for your Foundry account details
 - Start the server
 
+**To update:** Simply run `./setup` again. It will:
+- Check for repository updates
+- Pull latest Foundry version if "release" tag is used
+- Rebuild containers if configuration changed
+- Skip reconfiguration (uses existing .env)
+
 ## Daily Use
 
 **Start the server:**
@@ -77,9 +83,24 @@ Example: `https://myserver.local`
 
 ## Updating Foundry
 
-### Update to Latest Version
+### Easiest Method: Re-run Setup
 
-1. Edit `.env` and change `FOUNDRY_DOCKER_TAG=release`
+The simplest way to update everything:
+```bash
+./setup
+```
+
+This will automatically:
+- Check for repository updates
+- Pull the latest Foundry image (if using "release" tag)
+- Rebuild containers if needed
+- Use your existing configuration (no need to re-enter credentials)
+
+### Manual Update to Latest Version
+
+If you prefer manual control:
+
+1. Edit `.env` and ensure `FOUNDRY_DOCKER_TAG=release`
 2. Pull the new image:
 ```bash
 docker compose pull
@@ -89,7 +110,9 @@ docker compose pull
 ./stop && ./start
 ```
 
-### Update to Specific Version
+### Manual Update to Specific Version
+
+To switch to a specific Foundry version:
 
 1. Edit `.env` and change `FOUNDRY_DOCKER_TAG=12` (or desired version number)
 2. Pull the new image:

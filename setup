@@ -713,6 +713,29 @@ else
     echo "      Your credentials will be used to download version: $foundry_docker_tag"
 fi
 
+# Check if Foundry Docker image needs updating
+echo
+echo "Checking for Foundry updates..."
+
+# Get current image ID if it exists
+current_image=$(docker images -q "felddy/foundryvtt:${foundry_docker_tag}" 2>/dev/null)
+
+# Pull latest image
+docker compose pull foundry 2>/dev/null || true
+
+# Get new image ID
+new_image=$(docker images -q "felddy/foundryvtt:${foundry_docker_tag}" 2>/dev/null)
+
+# Check if image changed
+if [ -n "$current_image" ] && [ "$current_image" != "$new_image" ]; then
+    echo "[INFO] New Foundry version available - will rebuild containers"
+    needs_rebuild=true
+elif [ -z "$current_image" ]; then
+    echo "[INFO] First time pulling Foundry image"
+else
+    echo "[OK] Foundry image is up to date"
+fi
+
 # Start the containers
 echo
 echo "=== Starting Foundry VTT ==="
@@ -720,8 +743,7 @@ echo
 
 # Pull latest images and rebuild if needed
 if [ "$needs_rebuild" = true ]; then
-    echo "[INFO] Configuration changed - pulling latest images and rebuilding containers..."
-    docker compose pull
+    echo "[INFO] Rebuilding containers with latest images..."
     docker compose up -d --force-recreate
     echo "[OK] Containers rebuilt"
 else

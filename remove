@@ -5,15 +5,18 @@ echo "=== Remove Foundry VTT Installation ==="
 echo
 echo "This will:"
 echo "  - Stop and remove all Foundry containers"
-echo "  - Remove deployment files (compose.yml, start, stop, logs, .env, remove)"
+echo "  - Remove deployment files (compose.yml, start, stop, logs, remove)"
 echo
 echo "You will be asked about:"
 echo "  - Keeping or deleting Foundry VTT software and all your data"
 echo "  - Keeping or removing nginx configuration and SSL certificates"
 echo
-echo "What will be preserved:"
+echo "What will always be preserved:"
 echo "  - The setup script (you can reinstall anytime)"
 echo "  - Docker, git, nginx, and other dependencies"
+echo
+echo "What will be conditionally preserved:"
+echo "  - Settings (.env) - kept if you keep data, deleted if you delete data"
 echo
 echo "Do you want to keep your Foundry installation and data?"
 echo "This includes:"
@@ -26,14 +29,16 @@ keep_data=${keep_data:-Y}
 
 if [[ "$keep_data" =~ ^[Yy]$ ]]; then
     echo "[INFO] Foundry VTT software and data will be preserved in Docker volumes"
-    echo "      Next time you run ./setup, it will use your existing installation"
+    echo "      Settings (.env) will also be preserved"
+    echo "      Next time you run ./setup, it will use your existing installation and settings"
     remove_volumes=false
 else
     echo
     echo "[WARN] This will PERMANENTLY DELETE:"
     echo "        - Foundry VTT software (will need to redownload on reinstall)"
     echo "        - ALL worlds, modules, systems, and assets"
-    echo "        - ALL configuration and settings"
+    echo "        - ALL configuration and settings (in Foundry)"
+    echo "        - Settings file (.env with credentials)"
     echo
     read -p "Are you absolutely sure? Type 'DELETE' to confirm: " confirm
     if [ "$confirm" != "DELETE" ]; then
@@ -101,25 +106,36 @@ rm -f compose.yml
 rm -f start
 rm -f stop
 rm -f logs
-rm -f .env
 rm -f .env.example
-echo "[OK] Deployment files removed"
+
+# Only remove .env if we're deleting data
+# If keeping data, preserve .env so reinstall uses same settings
+if [ "$remove_volumes" = true ]; then
+    rm -f .env
+    echo "[OK] Deployment files and settings removed (.env deleted)"
+else
+    echo "[OK] Deployment files removed (.env preserved for reinstall)"
+fi
 
 echo
 echo "=== Removal Complete ==="
 echo
 echo "What was removed:"
 echo "  - Foundry VTT containers"
-echo "  - Deployment files (compose.yml, start, stop, logs, .env, remove)"
 if [ "$remove_volumes" = true ]; then
+    echo "  - Deployment files (compose.yml, start, stop, logs, remove)"
+    echo "  - Settings (.env with credentials and configuration)"
     echo "  - Foundry VTT software and all data (Docker volumes)"
+else
+    echo "  - Deployment files (compose.yml, start, stop, logs, remove)"
 fi
 echo
 echo "What was preserved:"
 echo "  - The setup script (./setup)"
 if [ "$remove_volumes" = false ]; then
+    echo "  - Settings (.env with credentials and configuration)"
     echo "  - Foundry VTT software and data (in Docker volumes)"
-    echo "    Next installation will use your existing Foundry and data"
+    echo "    Next installation will use your existing settings and Foundry"
 fi
 echo
 if [ "$remove_volumes" = false ]; then

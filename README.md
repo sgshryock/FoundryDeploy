@@ -71,13 +71,16 @@ The setup script will:
 ```
 This script will:
 - Stop and remove all Foundry containers
-- Remove deployment files (compose.yml, start, stop, logs, .env, remove)
+- Remove deployment files (compose.yml, start, stop, logs, remove)
 - Prompt you to keep or delete:
   - **Foundry VTT software and all data** (worlds, modules, systems, assets, config)
   - **nginx configuration and SSL certificates**
 - Always preserve the setup script for easy reinstallation
+- Preserve settings (.env) if you keep data, delete it if you delete data
 
-**Note:** If you keep your Foundry installation and data, the next time you run `./setup` it will use your existing Foundry VTT and data without redownloading.
+**Note:** If you keep your Foundry installation and data, the next time you run `./setup` it will:
+- Use your existing Foundry VTT and data without redownloading
+- Use your existing settings (.env) without asking for credentials again
 
 ## Accessing Foundry
 

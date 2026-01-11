@@ -553,6 +553,21 @@ if [ -f .env ]; then
                 fi
             fi
 
+            # Always ensure SYSTEM_HOSTNAME matches current system hostname
+            echo
+            echo "Updating system hostname in configuration..."
+            if grep -q "^SYSTEM_HOSTNAME=" .env; then
+                # Update existing SYSTEM_HOSTNAME
+                sed -i.bak "s/^SYSTEM_HOSTNAME=.*/SYSTEM_HOSTNAME=$system_hostname/" .env
+                rm -f .env.bak
+            else
+                # Add SYSTEM_HOSTNAME if it doesn't exist
+                echo "" >> .env
+                echo "# System hostname for Docker container (prevents license re-acknowledgement)" >> .env
+                echo "SYSTEM_HOSTNAME=$system_hostname" >> .env
+            fi
+            echo "[OK] System hostname set to: $system_hostname"
+
             # Skip to container startup (don't prompt for config)
             skip_config=true
             ;;
@@ -664,8 +679,11 @@ CONTAINER_PRESERVE_CONFIG=true
 
 TZ=$timezone
 
-# Hostname for the Foundry server
+# Hostname for accessing Foundry in browser (can be custom)
 FOUNDRY_HOSTNAME=$foundry_hostname
+
+# System hostname for Docker container (prevents license re-acknowledgement)
+SYSTEM_HOSTNAME=$system_hostname
 
 # User/Group IDs for file permissions
 FOUNDRY_UID=$foundry_uid

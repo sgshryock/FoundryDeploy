@@ -8,7 +8,7 @@ services:
 
   foundry:
     image: felddy/foundryvtt:${FOUNDRY_DOCKER_TAG:-release}
-    hostname: ${FOUNDRY_HOSTNAME}
+    hostname: ${SYSTEM_HOSTNAME}
     container_name: foundry
     depends_on:
       foundry-init:

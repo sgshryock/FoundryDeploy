@@ -88,14 +88,75 @@ echo "[OK] Docker daemon is running"
 echo
 
 # Determine if we need to clone
+needs_rebuild=false
+
 if [ -f "compose.yml" ] && [ -f "setup" ]; then
     # We're already in the repo
     echo "[OK] Already in FoundryDeploy directory"
+
+    # Check for updates
+    echo "Checking for updates..."
+    git fetch origin main 2>/dev/null || true
+
+    if git rev-parse @{u} &>/dev/null; then
+        LOCAL=$(git rev-parse @)
+        REMOTE=$(git rev-parse @{u})
+
+        if [ "$LOCAL" != "$REMOTE" ]; then
+            echo "[INFO] Updates available"
+            read -p "Pull latest updates? [Y/n]: " pull_updates
+            pull_updates=${pull_updates:-Y}
+
+            if [[ "$pull_updates" =~ ^[Yy]$ ]]; then
+                # Check if compose.yml will change
+                if git diff --name-only $LOCAL $REMOTE | grep -q "compose.yml"; then
+                    needs_rebuild=true
+                fi
+
+                git pull origin main
+                echo "[OK] Updates pulled"
+            else
+                echo "[INFO] Skipping updates"
+            fi
+        else
+            echo "[OK] Already up to date"
+        fi
+    fi
+
 elif [ -d "$INSTALL_DIR" ]; then
     # Directory exists, check if it's the repo
     if [ -f "$INSTALL_DIR/compose.yml" ]; then
         echo "[OK] FoundryDeploy directory exists"
         cd "$INSTALL_DIR"
+
+        # Check for updates
+        echo "Checking for updates..."
+        git fetch origin main 2>/dev/null || true
+
+        if git rev-parse @{u} &>/dev/null; then
+            LOCAL=$(git rev-parse @)
+            REMOTE=$(git rev-parse @{u})
+
+            if [ "$LOCAL" != "$REMOTE" ]; then
+                echo "[INFO] Updates available"
+                read -p "Pull latest updates? [Y/n]: " pull_updates
+                pull_updates=${pull_updates:-Y}
+
+                if [[ "$pull_updates" =~ ^[Yy]$ ]]; then
+                    # Check if compose.yml will change
+                    if git diff --name-only $LOCAL $REMOTE | grep -q "compose.yml"; then
+                        needs_rebuild=true
+                    fi
+
+                    git pull origin main
+                    echo "[OK] Updates pulled"
+                else
+                    echo "[INFO] Skipping updates"
+                fi
+            else
+                echo "[OK] Already up to date"
+            fi
+        fi
     else
         echo "[ERROR] Directory '$INSTALL_DIR' exists but is not FoundryDeploy repo"
         exit 1
@@ -657,7 +718,15 @@ echo
 echo "=== Starting Foundry VTT ==="
 echo
 
-docker compose up -d
+# Pull latest images and rebuild if needed
+if [ "$needs_rebuild" = true ]; then
+    echo "[INFO] Configuration changed - pulling latest images and rebuilding containers..."
+    docker compose pull
+    docker compose up -d --force-recreate
+    echo "[OK] Containers rebuilt"
+else
+    docker compose up -d
+fi
 
 echo
 echo "=== Setup Complete ==="

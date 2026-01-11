@@ -228,9 +228,20 @@ elif [ "$INSTALL_DIR" != "." ] && [ -d "$INSTALL_DIR" ]; then
 else
     # Clone fresh (only if not already in FoundryDeploy)
     if [ "$INSTALL_DIR" = "." ]; then
-        # We're in FoundryDeploy but no git repo - check if directory has files
-        if [ "$(ls -A .)" ]; then
-            # Directory has files - can't clone, initialize git manually
+        # We're in FoundryDeploy directory - check git status
+        if [ -d ".git" ]; then
+            # Git already initialized - just fetch and reset
+            echo "[INFO] Git repository already exists. Updating..."
+            # Remove any nested FoundryDeploy directory that might exist
+            if [ -d "FoundryDeploy" ]; then
+                echo "[INFO] Removing nested FoundryDeploy directory..."
+                rm -rf "FoundryDeploy"
+            fi
+            git fetch origin main 2>/dev/null || true
+            git reset --hard origin/main
+            echo "[OK] Repository updated"
+        elif [ "$(ls -A .)" ]; then
+            # Directory has files but no git - initialize git
             echo "[INFO] Directory is not empty. Initializing git repository..."
             # Remove any nested FoundryDeploy directory that might exist
             if [ -d "FoundryDeploy" ]; then

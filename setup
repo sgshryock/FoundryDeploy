@@ -94,7 +94,8 @@ if [ -f "compose.yml" ] && [ -f "setup" ]; then
     # We're already in the repo
     echo "[OK] Already in FoundryDeploy directory"
 
-    # Check for updates
+    # Check for updates - only prompt if .env exists (indicates previous setup)
+    # If .env doesn't exist, this is initial setup - just pull latest
     echo "Checking for updates..."
     git fetch origin main 2>/dev/null || true
 
@@ -103,16 +104,24 @@ if [ -f "compose.yml" ] && [ -f "setup" ]; then
         REMOTE=$(git rev-parse @{u})
 
         if [ "$LOCAL" != "$REMOTE" ]; then
-            echo "[INFO] Updates available"
-            read -p "Pull latest updates? [Y/n]: " pull_updates
-            pull_updates=${pull_updates:-Y}
+            if [ -f ".env" ]; then
+                # Previous setup exists - prompt user
+                echo "[INFO] Updates available"
+                read -p "Pull latest updates? [Y/n]: " pull_updates
+                pull_updates=${pull_updates:-Y}
 
-            if [[ "$pull_updates" =~ ^[Yy]$ ]]; then
-                git pull origin main
-                echo "[OK] Updates pulled"
-                echo "[INFO] Docker Compose will automatically apply any configuration changes"
+                if [[ "$pull_updates" =~ ^[Yy]$ ]]; then
+                    git pull origin main
+                    echo "[OK] Updates pulled"
+                    echo "[INFO] Docker Compose will automatically apply any configuration changes"
+                else
+                    echo "[INFO] Skipping updates"
+                fi
             else
-                echo "[INFO] Skipping updates"
+                # Initial setup - pull latest automatically
+                echo "[INFO] Pulling latest version for initial setup..."
+                git pull origin main
+                echo "[OK] Repository updated"
             fi
         else
             echo "[OK] Already up to date"
@@ -137,7 +146,7 @@ elif [ -d "$INSTALL_DIR" ]; then
                 git reset --hard origin/main
                 echo "[OK] Repository files restored"
             else
-                # Check for updates
+                # Check for updates - only prompt if .env exists (indicates previous setup)
                 echo "Checking for updates..."
                 git fetch origin main 2>/dev/null || true
 
@@ -146,16 +155,24 @@ elif [ -d "$INSTALL_DIR" ]; then
                     REMOTE=$(git rev-parse @{u})
 
                     if [ "$LOCAL" != "$REMOTE" ]; then
-                        echo "[INFO] Updates available"
-                        read -p "Pull latest updates? [Y/n]: " pull_updates
-                        pull_updates=${pull_updates:-Y}
+                        if [ -f ".env" ]; then
+                            # Previous setup exists - prompt user
+                            echo "[INFO] Updates available"
+                            read -p "Pull latest updates? [Y/n]: " pull_updates
+                            pull_updates=${pull_updates:-Y}
 
-                        if [[ "$pull_updates" =~ ^[Yy]$ ]]; then
-                            git pull origin main
-                            echo "[OK] Updates pulled"
-                            echo "[INFO] Docker Compose will automatically apply any configuration changes"
+                            if [[ "$pull_updates" =~ ^[Yy]$ ]]; then
+                                git pull origin main
+                                echo "[OK] Updates pulled"
+                                echo "[INFO] Docker Compose will automatically apply any configuration changes"
+                            else
+                                echo "[INFO] Skipping updates"
+                            fi
                         else
-                            echo "[INFO] Skipping updates"
+                            # Initial setup - pull latest automatically
+                            echo "[INFO] Pulling latest version for initial setup..."
+                            git pull origin main
+                            echo "[OK] Repository updated"
                         fi
                     else
                         echo "[OK] Already up to date"

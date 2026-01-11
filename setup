@@ -292,10 +292,12 @@ if [ -f .env ]; then
     echo
     echo "[INFO] An .env file already exists."
     echo "Options:"
-    echo "  1) Use existing configuration (recommended for updates)"
+    echo "  1) Use existing configuration (recommended for updates) - default"
     echo "  2) Reconfigure from scratch (current file will be backed up)"
     echo "  3) Abort setup"
-    read -p "Choose [1/2/3]: " config_choice
+    echo
+    read -p "Choose [1/2/3] (default=1): " config_choice
+    config_choice=${config_choice:-1}  # Default to option 1
 
     case $config_choice in
         1)

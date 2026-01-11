@@ -37,9 +37,13 @@ parse_env_value() {
     grep -E "^${key}=" .env | cut -d'=' -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed 's/#.*//'
 }
 
-# Load port from .env
-FOUNDRY_PORT=$(parse_env_value "FOUNDRY_PORT")
-FOUNDRY_PORT=${FOUNDRY_PORT:-80}
+# Start nginx
+echo "Starting nginx..."
+if sudo systemctl start nginx 2>/dev/null; then
+    echo "[OK] nginx started"
+else
+    echo "[WARN] Could not start nginx (may already be running)"
+fi
 
 echo "Starting containers..."
 docker compose up -d
@@ -51,9 +55,9 @@ echo "Waiting for containers to start..."
 max_wait=30
 waited=0
 while [ $waited -lt $max_wait ]; do
-    if docker compose ps 2>/dev/null | grep -q "foundry.*Up" && docker compose ps 2>/dev/null | grep -q "caddy.*Up"; then
+    if docker compose ps 2>/dev/null | grep -q "foundry.*Up"; then
         echo
-        echo "[OK] Containers are ready"
+        echo "[OK] Foundry container is ready"
         break
     fi
     echo -n "."
@@ -63,13 +67,13 @@ done
 
 if [ $waited -ge $max_wait ]; then
     echo
-    echo "[WARN] Containers may still be starting (waited ${max_wait}s)"
+    echo "[WARN] Foundry may still be starting (waited ${max_wait}s)"
     echo "  Check status with: docker compose ps"
 fi
 
 # Check container status
 echo
-echo "Checking container status..."
+echo "Checking services..."
 
 if docker compose ps | grep -q "foundry.*Up"; then
     echo "[OK] Foundry container is running"
@@ -79,27 +83,20 @@ else
     exit 1
 fi
 
-if docker compose ps | grep -q "caddy.*Up"; then
-    echo "[OK] Caddy container is running"
+if systemctl is-active --quiet nginx; then
+    echo "[OK] nginx is running"
 else
-    echo "[ERROR] Caddy container is not running"
-    echo "  Check logs with: docker compose logs caddy"
+    echo "[ERROR] nginx is not running"
+    echo "  Start it with: sudo systemctl start nginx"
     exit 1
-fi
-
-# Check if port is listening (supports IPv4 and IPv6)
-if docker compose ps | grep -E -q "(0\.0\.0\.0|:::|:)${FOUNDRY_PORT}->80"; then
-    echo "[OK] Caddy is listening on port ${FOUNDRY_PORT}"
-else
-    echo "[WARN] Could not verify port ${FOUNDRY_PORT} is exposed"
 fi
 
 echo
 echo "=== Foundry VTT Started ==="
 echo
 FOUNDRY_HOSTNAME=$(parse_env_value "FOUNDRY_HOSTNAME")
-echo "Access Foundry at: http://${FOUNDRY_HOSTNAME}:${FOUNDRY_PORT}"
+echo "Access Foundry at: https://${FOUNDRY_HOSTNAME}"
 echo
 echo "View logs with:"
-echo "  docker compose logs -f"
+echo "  ./logs"
 echo

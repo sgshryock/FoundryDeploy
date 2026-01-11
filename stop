@@ -27,3 +27,6 @@ echo
 echo "Data is preserved in the Docker volume."
 echo "To remove all data, run: docker compose down -v"
 echo
+echo "Note: nginx is still running. To stop it:"
+echo "  sudo systemctl stop nginx"
+echo

@@ -69,9 +69,12 @@ The setup script will:
 ```bash
 ./remove
 ```
-This will prompt you to:
-- Keep or delete your Foundry data (worlds, modules, etc.)
-- Keep or remove nginx configuration and SSL certificates
+This will:
+- Remove all deployment files (compose.yml, start, stop, logs, .env)
+- Stop and remove Docker containers
+- Prompt you to keep or delete your Foundry data (worlds, modules, etc.)
+- Prompt you to keep or remove nginx configuration and SSL certificates
+- Preserve the setup script so you can easily reinstall
 
 ## Accessing Foundry
 

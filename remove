@@ -5,12 +5,13 @@ echo "=== Remove Foundry VTT Installation ==="
 echo
 echo "This will:"
 echo "  - Stop and remove all Foundry containers"
+echo "  - Remove deployment files (compose.yml, start, stop, logs, .env)"
 echo "  - Optionally remove Foundry data (worlds, modules, etc.)"
 echo "  - Optionally remove nginx configuration and SSL certificates"
 echo
 echo "This will NOT:"
 echo "  - Remove Docker, git, nginx, or other dependencies"
-echo "  - Remove the FoundryDeploy directory or scripts"
+echo "  - Remove the setup script (you can reinstall anytime)"
 echo
 read -p "Do you want to keep your Foundry data (worlds, modules, etc.)? [Y/n]: " keep_data
 keep_data=${keep_data:-Y}
@@ -74,15 +75,28 @@ else
     echo "[INFO] nginx configuration kept (you can manually remove it later)"
 fi
 
+# Remove deployment files
+echo
+echo "Removing deployment files..."
+rm -f compose.yml
+rm -f start
+rm -f stop
+rm -f logs
+rm -f .env
+rm -f .env.example
+echo "[OK] Deployment files removed"
+
 echo
 echo "=== Removal Complete ==="
 echo
-echo "FoundryDeploy directory and scripts have been preserved."
+echo "FoundryDeploy directory and setup script have been preserved."
 if [ "$remove_volumes" = false ]; then
     echo "Your Foundry data is preserved in Docker volumes."
 fi
 echo
-echo "To reinstall or restart:"
-echo "  ./setup   - Reconfigure and start"
-echo "  ./start   - Just start containers (if already configured)"
+echo "To reinstall:"
+echo "  ./setup   - Run setup to reinstall Foundry VTT"
 echo
+
+# Remove this script last
+rm -f "$0"

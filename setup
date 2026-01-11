@@ -793,25 +793,40 @@ fi
 
 # Check if Foundry Docker image needs updating
 echo
-echo "Checking for Foundry updates..."
 
 # Get current image ID if it exists
 current_image=$(docker images -q "felddy/foundryvtt:${foundry_docker_tag}" 2>/dev/null)
 
-# Pull latest image
-docker compose pull foundry 2>/dev/null || true
-
-# Get new image ID
-new_image=$(docker images -q "felddy/foundryvtt:${foundry_docker_tag}" 2>/dev/null)
-
-# Check if image changed
-if [ -n "$current_image" ] && [ "$current_image" != "$new_image" ]; then
-    echo "[INFO] New Foundry version available - will rebuild containers"
+if [ -z "$current_image" ]; then
+    # First time - must pull
+    echo "Downloading Foundry Docker image..."
+    docker compose pull foundry
     needs_rebuild=true
-elif [ -z "$current_image" ]; then
-    echo "[INFO] First time pulling Foundry image"
 else
-    echo "[OK] Foundry image is up to date"
+    # Image exists - ask if user wants to check for updates
+    echo "Foundry Docker image found locally."
+    read -p "Check for Foundry updates? [y/N]: " check_updates
+    check_updates=${check_updates:-N}
+
+    if [[ "$check_updates" =~ ^[Yy]$ ]]; then
+        echo "Checking for updates..."
+
+        # Pull latest image
+        docker compose pull foundry 2>/dev/null || true
+
+        # Get new image ID
+        new_image=$(docker images -q "felddy/foundryvtt:${foundry_docker_tag}" 2>/dev/null)
+
+        # Check if image changed
+        if [ "$current_image" != "$new_image" ]; then
+            echo "[INFO] New Foundry version available - will rebuild containers"
+            needs_rebuild=true
+        else
+            echo "[OK] Foundry image is up to date"
+        fi
+    else
+        echo "[OK] Skipping update check - using existing image"
+    fi
 fi
 
 # Start the containers

@@ -13,6 +13,7 @@ Run your own Foundry VTT server on a Linux machine.
 - nginx (installed by setup script)
 - openssl (installed by setup script)
 - A Foundry VTT license and account
+- **User account with sudo privileges** (for nginx configuration)
 
 ### Recommended
 - 4 GB RAM
@@ -22,12 +23,18 @@ Run your own Foundry VTT server on a Linux machine.
 
 ## Setup
 
+**Prerequisites:**
+- You must have sudo privileges on your server
+- Your user must be in the `docker` group (setup script will check and instruct if not)
+
 1. Copy the `setup` script to your server
 2. Run these commands:
 ```bash
 sudo apt update && sudo apt upgrade -y
 ./setup
 ```
+
+**Important:** Run `./setup` as a normal user (NOT with sudo). The script will prompt for your password when it needs elevated privileges for nginx configuration.
 
 The setup script will:
 - Install any missing software
@@ -340,6 +347,26 @@ sudo ss -tulpn | grep nginx
 ```
 
 ### Permission Errors
+
+**Docker permission denied:**
+If you see "permission denied while trying to connect to Docker daemon":
+```bash
+# Add your user to the docker group
+sudo usermod -aG docker $USER
+
+# Log out and back in for changes to take effect
+# Or run this to apply immediately (in current shell only):
+newgrp docker
+
+# Verify you're in the docker group
+groups | grep docker
+```
+
+**nginx configuration permission denied:**
+Make sure you have sudo privileges. Test with:
+```bash
+sudo nginx -t
+```
 
 **Fix data volume permissions:**
 ```bash

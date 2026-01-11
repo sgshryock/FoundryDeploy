@@ -77,6 +77,50 @@ echo "Checking services..."
 
 if docker compose ps | grep -q "foundry.*Up"; then
     echo "[OK] Foundry container is running"
+
+    # Check for authentication failures in logs
+    echo "Checking for authentication errors..."
+    sleep 3  # Give container time to attempt authentication
+
+    if docker compose logs foundry --tail 50 2>/dev/null | grep -q "Unable to authenticate\|Unable to log in"; then
+        echo
+        echo "[ERROR] Foundry authentication failed"
+        echo "        Your Foundry credentials in .env are incorrect"
+        echo
+        echo "To fix:"
+        echo "  1. Verify your credentials at https://foundryvtt.com"
+        echo "  2. Run ./setup to update your credentials"
+        echo "  3. Run ./start to try again"
+        echo
+        echo "Current username: $(parse_env_value 'FOUNDRY_USERNAME')"
+        exit 1
+    fi
+
+    # Check if container is restarting (crash loop)
+    if docker compose ps | grep -q "foundry.*Restarting"; then
+        echo
+        echo "[ERROR] Foundry container is crash-looping"
+        echo "        Check logs for details: ./logs"
+        exit 1
+    fi
+
+elif docker compose ps | grep -q "foundry.*Restarting"; then
+    echo "[ERROR] Foundry container is restarting (likely crashed)"
+    echo
+    # Check for common errors
+    if docker compose logs foundry --tail 50 2>/dev/null | grep -q "Unable to authenticate\|Unable to log in"; then
+        echo "[ERROR] Authentication failed - your Foundry credentials are incorrect"
+        echo
+        echo "To fix:"
+        echo "  1. Verify your credentials at https://foundryvtt.com"
+        echo "  2. Run ./setup to update your credentials"
+        echo "  3. Run ./start to try again"
+        echo
+        echo "Current username: $(parse_env_value 'FOUNDRY_USERNAME')"
+    else
+        echo "Check logs with: ./logs"
+    fi
+    exit 1
 else
     echo "[ERROR] Foundry container is not running"
     echo "  Check logs with: docker compose logs foundry"

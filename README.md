@@ -389,16 +389,45 @@ docker run --rm -v foundrydeploy_foundry_data:/data alpine chown -R $(id -u):$(i
 
 ### Foundry Won't Download
 
-**Check credentials in .env:**
+**Symptoms:**
+- Container keeps restarting
+- 502 Bad Gateway when accessing Foundry
+- Logs show "Unable to authenticate" or "Unable to log in"
+
+**Cause: Invalid Credentials**
+
+The most common cause is incorrect Foundry VTT account credentials in the `.env` file.
+
+**Check credentials:**
 ```bash
-# Verify FOUNDRY_USERNAME and FOUNDRY_PASSWORD are correct
+# View current username (from FoundryDeploy directory)
 grep FOUNDRY_USERNAME .env
+
+# Check container logs for authentication errors
+./logs
+# Look for lines like "Unable to log in as username"
+```
+
+**Fix incorrect credentials:**
+```bash
+# Re-run setup to update credentials
+./setup
+
+# When prompted, enter your correct Foundry account credentials
+# Then restart the containers
+./start
 ```
 
 **Verify your Foundry account:**
-- Log in to https://foundryvtt.com
-- Verify your license is active
-- Check that your credentials are correct
+1. Log in to https://foundryvtt.com with your credentials
+2. Verify your license is active and not expired
+3. Ensure you're using your account email/username, not your license key
+4. Check for any special characters in your password that might need escaping
+
+**Still not working?**
+- Try resetting your Foundry password at https://foundryvtt.com
+- Make sure you don't have spaces before/after credentials in `.env`
+- Check if you've hit the download rate limit (wait 15 minutes)
 
 ### Port Already in Use
 

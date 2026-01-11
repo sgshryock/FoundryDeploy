@@ -39,6 +39,12 @@ sudo apt update && sudo apt upgrade -y
 
 **Important:** Run `./setup` as a normal user (NOT with sudo). The script will prompt for your password when it needs elevated privileges for nginx configuration.
 
+**Note:** You can run `./setup` from anywhere:
+- From your home directory: `~/setup`
+- From the FoundryDeploy directory: `cd ~/FoundryDeploy && ./setup`
+
+Both work the same way!
+
 The setup script will:
 - Install any missing software
 - Download the server files
@@ -46,10 +52,16 @@ The setup script will:
 - Start the server
 
 **To update:** Simply run `./setup` again. It will:
-- Check for repository updates
+- Automatically update itself to the latest version
+- Check for repository updates and pull if available
+- Prompt you to use existing configuration or reconfigure
 - Pull latest Foundry version if "release" tag is used
-- Rebuild containers if configuration changed
-- Skip reconfiguration (uses existing .env)
+- Rebuild containers if needed
+
+**Re-running setup is safe!** If you have an existing installation:
+- Press Enter (or type 1) to keep your existing configuration
+- Your credentials and settings will be preserved
+- No need to re-enter anything
 
 ## Daily Use
 
@@ -57,6 +69,7 @@ The setup script will:
 ```bash
 ./start
 ```
+The start script will automatically check for authentication errors and provide clear instructions if your Foundry credentials are incorrect.
 
 **Stop the server:**
 ```bash

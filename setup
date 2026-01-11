@@ -853,6 +853,7 @@ echo "  (Note: You'll see a security warning due to the self-signed certificate)
 echo "  (Click 'Advanced' and 'Proceed' to accept the certificate)"
 echo
 echo "Manage your server with:"
+echo "  cd $(pwd)"
 echo "  ./start   - Start the server"
 echo "  ./stop    - Stop the server"
 echo "  ./logs    - View server logs"

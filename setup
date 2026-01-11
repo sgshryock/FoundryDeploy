@@ -846,13 +846,16 @@ echo
 echo "=== Starting Foundry VTT ==="
 echo
 
-# Pull latest images and rebuild if needed
+# Start or update containers
+# Docker Compose will automatically recreate containers when:
+# - Configuration changed (compose.yml or .env)
+# - Image changed (new version pulled)
+docker compose up -d
+
 if [ "$needs_rebuild" = true ]; then
-    echo "[INFO] Rebuilding containers with latest images..."
-    docker compose up -d --force-recreate
-    echo "[OK] Containers rebuilt"
+    echo "[OK] Containers updated with latest images"
 else
-    docker compose up -d
+    echo "[OK] Containers started"
 fi
 
 echo

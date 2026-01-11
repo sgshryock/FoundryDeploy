@@ -4,14 +4,13 @@ set -e
 echo "=== Remove Foundry VTT Installation ==="
 echo
 echo "This will:"
-echo "  - Stop all Foundry containers"
-echo "  - Remove all containers and networks"
-echo "  - Remove the FoundryDeploy directory"
+echo "  - Stop and remove all Foundry containers"
+echo "  - Optionally remove Foundry data (worlds, modules, etc.)"
 echo "  - Optionally remove nginx configuration and SSL certificates"
 echo
 echo "This will NOT:"
 echo "  - Remove Docker, git, nginx, or other dependencies"
-echo "  - Remove the setup script"
+echo "  - Remove the FoundryDeploy directory or scripts"
 echo
 read -p "Do you want to keep your Foundry data (worlds, modules, etc.)? [Y/n]: " keep_data
 keep_data=${keep_data:-Y}
@@ -37,16 +36,20 @@ INSTALL_DIR=$(basename "$(pwd)")
 
 echo "Stopping containers..."
 if docker compose ps --quiet 2>/dev/null | grep -q .; then
-    docker compose down
-    echo "[OK] Containers stopped and removed"
+    if [ "$remove_volumes" = true ]; then
+        docker compose down -v
+        echo "[OK] Containers stopped and data volumes removed"
+    else
+        docker compose down
+        echo "[OK] Containers stopped (data preserved in volumes)"
+    fi
 else
     echo "[INFO] No running containers found"
-fi
-
-if [ "$remove_volumes" = true ]; then
-    echo "Removing data volumes..."
-    docker compose down -v 2>/dev/null || true
-    echo "[OK] Data volumes removed"
+    if [ "$remove_volumes" = true ]; then
+        echo "Removing data volumes..."
+        docker compose down -v 2>/dev/null || true
+        echo "[OK] Data volumes removed"
+    fi
 fi
 
 # Ask about nginx configuration removal
@@ -71,18 +74,15 @@ else
     echo "[INFO] nginx configuration kept (you can manually remove it later)"
 fi
 
-echo "Removing FoundryDeploy directory..."
-cd "$PARENT_DIR"
-rm -rf "$INSTALL_DIR"
-echo "[OK] FoundryDeploy directory removed"
-
 echo
 echo "=== Removal Complete ==="
 echo
+echo "FoundryDeploy directory and scripts have been preserved."
 if [ "$remove_volumes" = false ]; then
     echo "Your Foundry data is preserved in Docker volumes."
-    echo "To remove it later, run: docker volume rm foundrydeploy_foundry_data"
 fi
 echo
-echo "To reinstall, run the setup script again."
+echo "To reinstall or restart:"
+echo "  ./setup   - Reconfigure and start"
+echo "  ./start   - Just start containers (if already configured)"
 echo

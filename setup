@@ -120,38 +120,62 @@ if [ -f "compose.yml" ] && [ -f "setup" ]; then
     fi
 
 elif [ -d "$INSTALL_DIR" ]; then
-    # Directory exists, check if it's the repo
-    if [ -f "$INSTALL_DIR/compose.yml" ]; then
-        echo "[OK] FoundryDeploy directory exists"
-        cd "$INSTALL_DIR"
+    # Directory exists, check if it's a valid repo
+    cd "$INSTALL_DIR"
 
-        # Check for updates
-        echo "Checking for updates..."
-        git fetch origin main 2>/dev/null || true
+    if [ -d ".git" ]; then
+        # It's a git repo - check if it's FoundryDeploy
+        REPO_REMOTE=$(git config --get remote.origin.url 2>/dev/null || echo "")
 
-        if git rev-parse @{u} &>/dev/null; then
-            LOCAL=$(git rev-parse @)
-            REMOTE=$(git rev-parse @{u})
+        if [[ "$REPO_REMOTE" == *"FoundryDeploy"* ]] || [ -f "compose.yml" ]; then
+            echo "[OK] FoundryDeploy directory exists"
 
-            if [ "$LOCAL" != "$REMOTE" ]; then
-                echo "[INFO] Updates available"
-                read -p "Pull latest updates? [Y/n]: " pull_updates
-                pull_updates=${pull_updates:-Y}
-
-                if [[ "$pull_updates" =~ ^[Yy]$ ]]; then
-                    git pull origin main
-                    echo "[OK] Updates pulled"
-                    echo "[INFO] Docker Compose will automatically apply any configuration changes"
-                else
-                    echo "[INFO] Skipping updates"
-                fi
+            # Ensure we have all files (in case some were deleted)
+            if [ ! -f "compose.yml" ] || [ ! -f "start" ] || [ ! -f "stop" ] || [ ! -f "logs" ]; then
+                echo "[INFO] Some files are missing, restoring from repository..."
+                git fetch origin main 2>/dev/null || true
+                git reset --hard origin/main
+                echo "[OK] Repository files restored"
             else
-                echo "[OK] Already up to date"
+                # Check for updates
+                echo "Checking for updates..."
+                git fetch origin main 2>/dev/null || true
+
+                if git rev-parse @{u} &>/dev/null; then
+                    LOCAL=$(git rev-parse @)
+                    REMOTE=$(git rev-parse @{u})
+
+                    if [ "$LOCAL" != "$REMOTE" ]; then
+                        echo "[INFO] Updates available"
+                        read -p "Pull latest updates? [Y/n]: " pull_updates
+                        pull_updates=${pull_updates:-Y}
+
+                        if [[ "$pull_updates" =~ ^[Yy]$ ]]; then
+                            git pull origin main
+                            echo "[OK] Updates pulled"
+                            echo "[INFO] Docker Compose will automatically apply any configuration changes"
+                        else
+                            echo "[INFO] Skipping updates"
+                        fi
+                    else
+                        echo "[OK] Already up to date"
+                    fi
+                fi
             fi
+        else
+            echo "[ERROR] Directory '$INSTALL_DIR' is a git repository but not FoundryDeploy"
+            echo "       Please remove or rename this directory first"
+            exit 1
         fi
     else
-        echo "[ERROR] Directory '$INSTALL_DIR' exists but is not FoundryDeploy repo"
-        exit 1
+        # Not a git repo - reinitialize by cloning fresh
+        echo "[INFO] Directory '$INSTALL_DIR' exists but is not a git repository"
+        echo "       Removing and cloning FoundryDeploy repository..."
+        cd ..
+        rm -rf "$INSTALL_DIR"
+        git clone "$REPO_URL" "$INSTALL_DIR"
+        cd "$INSTALL_DIR"
+        echo "[OK] Repository cloned"
     fi
 else
     # Clone fresh

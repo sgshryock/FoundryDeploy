@@ -5,22 +5,36 @@ echo "=== Remove Foundry VTT Installation ==="
 echo
 echo "This will:"
 echo "  - Stop and remove all Foundry containers"
-echo "  - Remove deployment files (compose.yml, start, stop, logs, .env)"
-echo "  - Optionally remove Foundry data (worlds, modules, etc.)"
-echo "  - Optionally remove nginx configuration and SSL certificates"
+echo "  - Remove deployment files (compose.yml, start, stop, logs, .env, remove)"
 echo
-echo "This will NOT:"
-echo "  - Remove Docker, git, nginx, or other dependencies"
-echo "  - Remove the setup script (you can reinstall anytime)"
+echo "You will be asked about:"
+echo "  - Keeping or deleting Foundry VTT software and all your data"
+echo "  - Keeping or removing nginx configuration and SSL certificates"
 echo
-read -p "Do you want to keep your Foundry data (worlds, modules, etc.)? [Y/n]: " keep_data
+echo "What will be preserved:"
+echo "  - The setup script (you can reinstall anytime)"
+echo "  - Docker, git, nginx, and other dependencies"
+echo
+echo "Do you want to keep your Foundry installation and data?"
+echo "This includes:"
+echo "  - Foundry VTT software (so you don't have to redownload it)"
+echo "  - All your worlds, modules, systems, and assets"
+echo "  - Configuration and settings"
+echo
+read -p "Keep everything? [Y/n]: " keep_data
 keep_data=${keep_data:-Y}
 
 if [[ "$keep_data" =~ ^[Yy]$ ]]; then
-    echo "[INFO] Your Foundry data will be preserved in Docker volumes"
+    echo "[INFO] Foundry VTT software and data will be preserved in Docker volumes"
+    echo "      Next time you run ./setup, it will use your existing installation"
     remove_volumes=false
 else
-    echo "[WARN] Your Foundry data will be PERMANENTLY DELETED"
+    echo
+    echo "[WARN] This will PERMANENTLY DELETE:"
+    echo "        - Foundry VTT software (will need to redownload on reinstall)"
+    echo "        - ALL worlds, modules, systems, and assets"
+    echo "        - ALL configuration and settings"
+    echo
     read -p "Are you absolutely sure? Type 'DELETE' to confirm: " confirm
     if [ "$confirm" != "DELETE" ]; then
         echo "Removal cancelled."
@@ -31,31 +45,34 @@ fi
 
 echo
 
-# Get the parent directory (where we'll return to after deletion)
-PARENT_DIR=$(dirname "$(pwd)")
-INSTALL_DIR=$(basename "$(pwd)")
-
 echo "Stopping containers..."
 if docker compose ps --quiet 2>/dev/null | grep -q .; then
     if [ "$remove_volumes" = true ]; then
         docker compose down -v
-        echo "[OK] Containers stopped and data volumes removed"
+        echo "[OK] Containers stopped and Docker volumes deleted"
+        echo "     (Foundry VTT software and all data removed)"
     else
         docker compose down
-        echo "[OK] Containers stopped (data preserved in volumes)"
+        echo "[OK] Containers stopped"
+        echo "     (Foundry VTT software and data preserved in Docker volumes)"
     fi
 else
     echo "[INFO] No running containers found"
     if [ "$remove_volumes" = true ]; then
-        echo "Removing data volumes..."
+        echo "Removing Docker volumes..."
         docker compose down -v 2>/dev/null || true
-        echo "[OK] Data volumes removed"
+        echo "[OK] Docker volumes deleted"
+        echo "     (Foundry VTT software and all data removed)"
     fi
 fi
 
 # Ask about nginx configuration removal
 echo
-read -p "Do you want to remove nginx configuration and SSL certificates? [Y/n]: " remove_nginx
+echo "nginx configuration includes:"
+echo "  - Reverse proxy configuration (/etc/nginx/sites-available/foundry)"
+echo "  - SSL certificates (/etc/nginx/certs/foundry.crt and foundry.key)"
+echo
+read -p "Remove nginx configuration and SSL certificates? [Y/n]: " remove_nginx
 remove_nginx=${remove_nginx:-Y}
 
 if [[ "$remove_nginx" =~ ^[Yy]$ ]]; then
@@ -68,11 +85,13 @@ if [[ "$remove_nginx" =~ ^[Yy]$ ]]; then
     # Reload nginx if it's running
     if systemctl is-active --quiet nginx 2>/dev/null; then
         sudo systemctl reload nginx 2>/dev/null || true
+        echo "[OK] nginx configuration and SSL certificates removed (nginx reloaded)"
+    else
+        echo "[OK] nginx configuration and SSL certificates removed"
     fi
-
-    echo "[OK] nginx configuration removed"
 else
-    echo "[INFO] nginx configuration kept (you can manually remove it later)"
+    echo "[INFO] nginx configuration kept"
+    echo "      You can manually remove it later from /etc/nginx/sites-available/foundry"
 fi
 
 # Remove deployment files
@@ -89,13 +108,27 @@ echo "[OK] Deployment files removed"
 echo
 echo "=== Removal Complete ==="
 echo
-echo "FoundryDeploy directory and setup script have been preserved."
-if [ "$remove_volumes" = false ]; then
-    echo "Your Foundry data is preserved in Docker volumes."
+echo "What was removed:"
+echo "  - Foundry VTT containers"
+echo "  - Deployment files (compose.yml, start, stop, logs, .env, remove)"
+if [ "$remove_volumes" = true ]; then
+    echo "  - Foundry VTT software and all data (Docker volumes)"
 fi
 echo
-echo "To reinstall:"
-echo "  ./setup   - Run setup to reinstall Foundry VTT"
+echo "What was preserved:"
+echo "  - The setup script (./setup)"
+if [ "$remove_volumes" = false ]; then
+    echo "  - Foundry VTT software and data (in Docker volumes)"
+    echo "    Next installation will use your existing Foundry and data"
+fi
+echo
+if [ "$remove_volumes" = false ]; then
+    echo "To restart Foundry VTT:"
+    echo "  ./setup   - Reinstall and start (will use existing Foundry installation)"
+else
+    echo "To install Foundry VTT again:"
+    echo "  ./setup   - Run setup (will download Foundry VTT fresh)"
+fi
 echo
 
 # Remove this script last

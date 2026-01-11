@@ -69,12 +69,15 @@ The setup script will:
 ```bash
 ./remove
 ```
-This will:
-- Remove all deployment files (compose.yml, start, stop, logs, .env)
-- Stop and remove Docker containers
-- Prompt you to keep or delete your Foundry data (worlds, modules, etc.)
-- Prompt you to keep or remove nginx configuration and SSL certificates
-- Preserve the setup script so you can easily reinstall
+This script will:
+- Stop and remove all Foundry containers
+- Remove deployment files (compose.yml, start, stop, logs, .env, remove)
+- Prompt you to keep or delete:
+  - **Foundry VTT software and all data** (worlds, modules, systems, assets, config)
+  - **nginx configuration and SSL certificates**
+- Always preserve the setup script for easy reinstallation
+
+**Note:** If you keep your Foundry installation and data, the next time you run `./setup` it will use your existing Foundry VTT and data without redownloading.
 
 ## Accessing Foundry
 

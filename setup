@@ -21,6 +21,20 @@ cleanup_on_error() {
 
 trap cleanup_on_error EXIT ERR
 
+# Function to update the setup script in parent directory
+update_setup_script() {
+    # Only update if we're running from a parent directory setup script
+    # (not running the setup script from within the repo itself)
+    if [ -f "../setup" ] && [ "$(basename "$(pwd)")" = "FoundryDeploy" ]; then
+        if ! cmp -s setup ../setup 2>/dev/null; then
+            echo "[INFO] Updating setup script in parent directory..."
+            cp setup ../setup
+            chmod +x ../setup
+            echo "[OK] Setup script updated"
+        fi
+    fi
+}
+
 echo "=== Foundry VTT Deployment Setup ==="
 echo
 
@@ -128,6 +142,9 @@ if [ -f "compose.yml" ] && [ -f "setup" ]; then
         fi
     fi
 
+    # Always sync setup script from repo to parent directory
+    update_setup_script
+
 elif [ -d "$INSTALL_DIR" ]; then
     # Directory exists, check if it's a valid repo
     cd "$INSTALL_DIR"
@@ -179,6 +196,9 @@ elif [ -d "$INSTALL_DIR" ]; then
                     fi
                 fi
             fi
+
+            # Always sync setup script from repo to parent directory
+            update_setup_script
         else
             echo "[ERROR] Directory '$INSTALL_DIR' is a git repository but not FoundryDeploy"
             echo "       Please remove or rename this directory first"
@@ -193,296 +213,38 @@ elif [ -d "$INSTALL_DIR" ]; then
         git clone "$REPO_URL" "$INSTALL_DIR"
         cd "$INSTALL_DIR"
         echo "[OK] Repository cloned"
+
+        # Sync setup script from repo to parent directory
+        update_setup_script
     fi
 else
     # Clone fresh
     echo "Cloning FoundryDeploy repository..."
     git clone "$REPO_URL" "$INSTALL_DIR"
     cd "$INSTALL_DIR"
+
+    # Sync setup script from repo to parent directory
+    update_setup_script
 fi
 
 echo
 
-# Ensure operational scripts exist
-echo "Checking operational scripts..."
+# Verify operational scripts exist (should be present from git)
+echo "Verifying operational scripts..."
 
-if [ ! -f "start" ]; then
-    echo "Creating start script..."
-    cat > start << 'STARTEOF'
-#!/bin/bash
-set -e
-
-echo "=== Starting Foundry VTT ==="
-echo
-
-# Check for docker
-if ! command -v docker &> /dev/null; then
-    echo "[ERROR] Docker is not installed"
-    exit 1
-fi
-
-# Check if docker daemon is running
-if ! docker info &> /dev/null; then
-    echo "[ERROR] Docker daemon is not running"
-    echo "  Start it with: sudo systemctl start docker"
-    exit 1
-fi
-
-# Check for docker compose
-if ! docker compose version &> /dev/null; then
-    if ! command -v docker-compose &> /dev/null; then
-        echo "[ERROR] Docker Compose is not installed"
+# Check that all required files are present
+for script in start stop logs remove compose.yml .env.example; do
+    if [ ! -f "$script" ]; then
+        echo "[ERROR] Required file '$script' is missing from repository"
+        echo "       This indicates a problem with the git repository"
+        echo "       Try: rm -rf FoundryDeploy && ./setup"
         exit 1
     fi
-fi
-
-# Check for .env file
-if [ ! -f .env ]; then
-    echo "[ERROR] No .env file found. Run ./setup first or copy .env.example to .env"
-    exit 1
-fi
-
-# Function to parse .env values robustly
-parse_env_value() {
-    local key=$1
-    grep -E "^${key}=" .env | cut -d'=' -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed 's/#.*//'
-}
-
-# Start nginx
-echo "Starting nginx..."
-if sudo systemctl start nginx 2>/dev/null; then
-    echo "[OK] nginx started"
-else
-    echo "[WARN] Could not start nginx (may already be running)"
-fi
-
-# Start containers
-echo "Starting Foundry container..."
-docker compose up -d
-
-echo
-echo "Waiting for Foundry to start..."
-
-# Poll for container readiness (max 30 seconds)
-max_wait=30
-waited=0
-while [ $waited -lt $max_wait ]; do
-    if docker compose ps 2>/dev/null | grep -q "foundry.*Up"; then
-        echo
-        echo "[OK] Foundry container is ready"
-        break
-    fi
-    echo -n "."
-    sleep 1
-    waited=$((waited + 1))
 done
 
-if [ $waited -ge $max_wait ]; then
-    echo
-    echo "[WARN] Foundry may still be starting (waited ${max_wait}s)"
-    echo "  Check status with: docker compose ps"
-fi
-
-# Check container status
-echo
-echo "Checking services..."
-
-if docker compose ps | grep -q "foundry.*Up"; then
-    echo "[OK] Foundry container is running"
-else
-    echo "[ERROR] Foundry container is not running"
-    echo "  Check logs with: docker compose logs foundry"
-    exit 1
-fi
-
-if systemctl is-active --quiet nginx; then
-    echo "[OK] nginx is running"
-else
-    echo "[ERROR] nginx is not running"
-    echo "  Start it with: sudo systemctl start nginx"
-    exit 1
-fi
-
-echo
-echo "=== Foundry VTT Started ==="
-echo
-FOUNDRY_HOSTNAME=$(parse_env_value "FOUNDRY_HOSTNAME")
-echo "Access Foundry at: https://${FOUNDRY_HOSTNAME}"
-echo
-echo "View logs with:"
-echo "  ./logs"
-echo
-STARTEOF
-    chmod +x start
-    echo "[OK] start script created"
-fi
-
-if [ ! -f "stop" ]; then
-    echo "Creating stop script..."
-    cat > stop << 'STOPEOF'
-#!/bin/bash
-set -e
-
-echo "=== Stopping Foundry VTT ==="
-echo
-
-# Check for docker compose
-if ! docker compose version &> /dev/null; then
-    if ! command -v docker-compose &> /dev/null; then
-        echo "[ERROR] Docker Compose is not installed"
-        exit 1
-    fi
-fi
-
-# Check if containers are running
-if ! docker compose ps --quiet 2>/dev/null | grep -q .; then
-    echo "No containers are running."
-    exit 0
-fi
-
-echo "Stopping containers..."
-docker compose down
-
-echo
-echo "=== Foundry VTT Stopped ==="
-echo
-echo "Data is preserved in the Docker volume."
-echo "To remove all data, run: docker compose down -v"
-echo
-STOPEOF
-    chmod +x stop
-    echo "[OK] stop script created"
-fi
-
-if [ ! -f "logs" ]; then
-    echo "Creating logs script..."
-    cat > logs << 'LOGSEOF'
-#!/bin/bash
-set -e
-
-echo "=== Foundry VTT Logs ==="
-
-# Check for docker compose
-if ! docker compose version &> /dev/null; then
-    if ! command -v docker-compose &> /dev/null; then
-        echo "[ERROR] Docker Compose is not installed"
-        exit 1
-    fi
-fi
-
-# Check if docker daemon is running
-if ! docker info &> /dev/null; then
-    echo "[ERROR] Docker daemon is not running"
-    echo "  Start it with: sudo systemctl start docker"
-    exit 1
-fi
-
-echo "Press Ctrl+C to exit"
-echo
-
-docker compose logs -f
-LOGSEOF
-    chmod +x logs
-    echo "[OK] logs script created"
-fi
-
-if [ ! -f "remove" ]; then
-    echo "Creating remove script..."
-    cat > remove << 'REMOVEEOF'
-#!/bin/bash
-set -e
-
-echo "=== Remove Foundry VTT Installation ==="
-echo
-echo "This will:"
-echo "  - Stop and remove all Foundry containers"
-echo "  - Optionally remove Foundry data (worlds, modules, etc.)"
-echo "  - Optionally remove nginx configuration and SSL certificates"
-echo
-echo "This will NOT:"
-echo "  - Remove Docker, git, nginx, or other dependencies"
-echo "  - Remove the FoundryDeploy directory or scripts"
-echo
-read -p "Do you want to keep your Foundry data (worlds, modules, etc.)? [Y/n]: " keep_data
-keep_data=${keep_data:-Y}
-
-if [[ "$keep_data" =~ ^[Yy]$ ]]; then
-    echo "[INFO] Your Foundry data will be preserved in Docker volumes"
-    remove_volumes=false
-else
-    echo "[WARN] Your Foundry data will be PERMANENTLY DELETED"
-    read -p "Are you absolutely sure? Type 'DELETE' to confirm: " confirm
-    if [ "$confirm" != "DELETE" ]; then
-        echo "Removal cancelled."
-        exit 0
-    fi
-    remove_volumes=true
-fi
-
-echo
-
-# Get the parent directory (where we'll return to after deletion)
-PARENT_DIR=$(dirname "$(pwd)")
-INSTALL_DIR=$(basename "$(pwd)")
-
-echo "Stopping containers..."
-if docker compose ps --quiet 2>/dev/null | grep -q .; then
-    if [ "$remove_volumes" = true ]; then
-        docker compose down -v
-        echo "[OK] Containers stopped and data volumes removed"
-    else
-        docker compose down
-        echo "[OK] Containers stopped (data preserved in volumes)"
-    fi
-else
-    echo "[INFO] No running containers found"
-    if [ "$remove_volumes" = true ]; then
-        echo "Removing data volumes..."
-        docker compose down -v 2>/dev/null || true
-        echo "[OK] Data volumes removed"
-    fi
-fi
-
-# Ask about nginx configuration removal
-echo
-read -p "Do you want to remove nginx configuration and SSL certificates? [Y/n]: " remove_nginx
-remove_nginx=${remove_nginx:-Y}
-
-if [[ "$remove_nginx" =~ ^[Yy]$ ]]; then
-    echo "Removing nginx configuration..."
-    sudo rm -f /etc/nginx/sites-enabled/foundry
-    sudo rm -f /etc/nginx/sites-available/foundry
-    sudo rm -f /etc/nginx/certs/foundry.crt
-    sudo rm -f /etc/nginx/certs/foundry.key
-
-    # Reload nginx if it's running
-    if systemctl is-active --quiet nginx 2>/dev/null; then
-        sudo systemctl reload nginx 2>/dev/null || true
-    fi
-
-    echo "[OK] nginx configuration removed"
-else
-    echo "[INFO] nginx configuration kept (you can manually remove it later)"
-fi
-
-echo
-echo "=== Removal Complete ==="
-echo
-echo "FoundryDeploy directory and scripts have been preserved."
-if [ "$remove_volumes" = false ]; then
-    echo "Your Foundry data is preserved in Docker volumes."
-fi
-echo
-echo "To reinstall or restart:"
-echo "  ./setup   - Reconfigure and start"
-echo "  ./start   - Just start containers (if already configured)"
-echo
-REMOVEEOF
-    chmod +x remove
-    echo "[OK] remove script created"
-fi
-
-echo
+# Ensure scripts are executable
+chmod +x start stop logs remove
+echo "[OK] Operational scripts verified"
 
 # Validation functions
 validate_non_empty() {

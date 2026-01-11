@@ -704,17 +704,37 @@ echo
 # Create nginx certs directory if it doesn't exist
 sudo mkdir -p /etc/nginx/certs
 
-# Generate self-signed SSL certificate if it doesn't exist
+# Check if SSL certificate exists and is valid
+regenerate_cert=false
+
 if [ ! -f /etc/nginx/certs/foundry.crt ] || [ ! -f /etc/nginx/certs/foundry.key ]; then
+    echo "SSL certificate not found, will generate..."
+    regenerate_cert=true
+else
+    # Check if certificate is expired or will expire in next 30 days
+    if sudo openssl x509 -checkend 2592000 -noout -in /etc/nginx/certs/foundry.crt 2>/dev/null; then
+        echo "[OK] SSL certificate is valid"
+    else
+        echo "[WARN] SSL certificate is expired or expiring soon, will regenerate..."
+        regenerate_cert=true
+    fi
+fi
+
+# Generate or regenerate SSL certificate
+if [ "$regenerate_cert" = true ]; then
     echo "Generating self-signed SSL certificate..."
     sudo openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
         -keyout /etc/nginx/certs/foundry.key \
         -out /etc/nginx/certs/foundry.crt \
         -subj "/C=US/ST=State/L=City/O=Organization/CN=$foundry_hostname" \
         2>/dev/null
-    echo "[OK] SSL certificate generated"
-else
-    echo "[OK] Using existing SSL certificate"
+    echo "[OK] SSL certificate generated (valid for 10 years)"
+
+    # Reload nginx if it's running to use new certificate
+    if systemctl is-active --quiet nginx 2>/dev/null; then
+        sudo systemctl reload nginx 2>/dev/null || true
+        echo "[OK] nginx reloaded with new certificate"
+    fi
 fi
 
 # Create nginx configuration

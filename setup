@@ -2,7 +2,15 @@
 set -e
 
 REPO_URL="https://github.com/sgshryock/FoundryDeploy.git"
-INSTALL_DIR="FoundryDeploy"
+
+# Determine installation directory
+# If we're already in a FoundryDeploy directory, use current directory
+# Otherwise, use "FoundryDeploy" subdirectory
+if [ "$(basename "$(pwd)")" = "FoundryDeploy" ]; then
+    INSTALL_DIR="."
+else
+    INSTALL_DIR="FoundryDeploy"
+fi
 
 # Cleanup function for error handling
 cleanup_on_error() {
@@ -145,7 +153,7 @@ if [ -f "compose.yml" ] && [ -f "setup" ]; then
     # Always sync setup script from repo to parent directory
     update_setup_script
 
-elif [ -d "$INSTALL_DIR" ]; then
+elif [ "$INSTALL_DIR" != "." ] && [ -d "$INSTALL_DIR" ]; then
     # Directory exists, check if it's a valid repo
     cd "$INSTALL_DIR"
 
@@ -218,10 +226,22 @@ elif [ -d "$INSTALL_DIR" ]; then
         update_setup_script
     fi
 else
-    # Clone fresh
-    echo "Cloning FoundryDeploy repository..."
-    git clone "$REPO_URL" "$INSTALL_DIR"
-    cd "$INSTALL_DIR"
+    # Clone fresh (only if not already in FoundryDeploy)
+    if [ "$INSTALL_DIR" = "." ]; then
+        # We're in FoundryDeploy but no git repo - initialize here
+        echo "Initializing FoundryDeploy repository in current directory..."
+        # Remove any nested FoundryDeploy directory that might exist
+        if [ -d "FoundryDeploy" ]; then
+            echo "[INFO] Removing nested FoundryDeploy directory..."
+            rm -rf "FoundryDeploy"
+        fi
+        git clone "$REPO_URL" .
+    else
+        # Clone into subdirectory
+        echo "Cloning FoundryDeploy repository..."
+        git clone "$REPO_URL" "$INSTALL_DIR"
+        cd "$INSTALL_DIR"
+    fi
 
     # Sync setup script from repo to parent directory
     update_setup_script
@@ -289,14 +309,15 @@ validate_version() {
 
 # Ensure we're in the FoundryDeploy directory before checking for .env
 # This handles both running from ~/setup and ~/FoundryDeploy/setup
-INSTALL_DIR=$(basename "$(pwd)")
-if [ "$INSTALL_DIR" != "FoundryDeploy" ]; then
-    if [ -d "FoundryDeploy" ]; then
-        cd FoundryDeploy
-    else
-        echo "[ERROR] Not in FoundryDeploy directory and can't find it"
-        exit 1
-    fi
+CURRENT_DIR=$(basename "$(pwd)")
+if [ "$CURRENT_DIR" != "FoundryDeploy" ] && [ -d "FoundryDeploy" ] && [ ! -f "compose.yml" ]; then
+    # Not in FoundryDeploy, but subdirectory exists and we're not in the repo yet
+    cd FoundryDeploy
+elif [ "$CURRENT_DIR" != "FoundryDeploy" ] && [ ! -f "compose.yml" ]; then
+    # Not in correct directory and can't find repo files
+    echo "[ERROR] Not in FoundryDeploy directory and repository files not found"
+    echo "       Current directory: $(pwd)"
+    exit 1
 fi
 
 # Check for existing .env file

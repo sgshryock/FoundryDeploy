@@ -5,6 +5,16 @@ Run your own Foundry VTT server on a Linux machine.
 > **⚠️ Local Network Only**
 > This setup is designed for **local network use only** (home networks, LANs). It uses self-signed SSL certificates and stores credentials in local files with standard permissions. Do not expose this server directly to the public internet without additional security hardening (proper SSL certificates, firewall configuration, VPN access, etc.).
 
+> **📦 Physical Machine or VM Required**
+> This setup is designed to run on a **physical Linux server or virtual machine**, not inside a Docker/LXC container. It installs and manages system services (nginx, Docker) that require:
+> - systemd for service management
+> - Direct access to `/etc/nginx/` and system configuration
+> - Root/sudo privileges for system-level changes
+>
+> **Best for:** Raspberry Pi, spare computer, cloud VM (DigitalOcean, Linode, AWS EC2), Proxmox VM, home server
+>
+> **Not suitable for:** Running inside Docker containers, Proxmox LXC containers (without advanced configuration), or other containerized environments
+
 ## Requirements
 
 ### Minimum

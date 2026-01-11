@@ -492,84 +492,77 @@ validate_version() {
     return 0
 }
 
-# Prompt for configuration
-echo "=== Configuration ==="
-echo
-echo "Enter your Foundry VTT account credentials."
-echo "These are used to download Foundry from your account."
-echo
-
-while true; do
-    read -p "Foundry Username: " foundry_username
-    validate_non_empty "$foundry_username" "Username" && break
-done
-
-while true; do
-    read -sp "Foundry Password: " foundry_password
-    echo
-    validate_non_empty "$foundry_password" "Password" && break
-done
-
-echo
-while true; do
-    read -p "Foundry Admin Key (password for the web UI): " foundry_admin_key
-    validate_non_empty "$foundry_admin_key" "Admin key" && break
-done
-
-echo
-echo "Foundry Version:"
-echo "  - Press Enter for latest stable"
-echo "  - Or enter a major version number (e.g., 12, 13)"
-while true; do
-    read -p "Version [latest]: " foundry_docker_tag
-    if [ -z "$foundry_docker_tag" ] || [ "$foundry_docker_tag" = "latest" ]; then
-        foundry_docker_tag="release"
-    fi
-    validate_version "$foundry_docker_tag" && break
-done
-
-echo
-# Auto-detect system hostname for mDNS
-system_hostname=$(hostname)
-echo "Hostname for this server:"
-echo "  - Detected system hostname: $system_hostname"
-echo "  - This hostname will work automatically via mDNS (no DNS setup needed)"
-echo "  - Or enter a different hostname (will require DNS/Pi-hole configuration)"
-echo
-while true; do
-    read -p "Hostname [$system_hostname]: " foundry_hostname
-    foundry_hostname=${foundry_hostname:-$system_hostname}
-    validate_hostname "$foundry_hostname" && break
-done
-
-# Warn if using custom hostname
-if [ "$foundry_hostname" != "$system_hostname" ]; then
-    echo
-    echo "[NOTE] You chose '$foundry_hostname' instead of '$system_hostname'"
-    echo "       This will require DNS configuration (like Pi-hole) to resolve."
-    echo "       Without DNS, you'll need to use the server's IP address."
-    echo
-fi
-
-read -p "Timezone [America/New_York]: " timezone
-timezone=${timezone:-America/New_York}
-
 # Check for existing .env file
 if [ -f .env ]; then
     echo
-    echo "[WARNING] An .env file already exists."
+    echo "[INFO] An .env file already exists."
     echo "Options:"
-    echo "  1) Overwrite (current file will be backed up to .env.backup.TIMESTAMP)"
-    echo "  2) Abort setup"
-    read -p "Choose [1/2]: " overwrite_choice
+    echo "  1) Use existing configuration (recommended for updates)"
+    echo "  2) Reconfigure from scratch (current file will be backed up)"
+    echo "  3) Abort setup"
+    read -p "Choose [1/2/3]: " config_choice
 
-    case $overwrite_choice in
+    case $config_choice in
         1)
+            echo "[OK] Using existing configuration"
+
+            # Parse existing values from .env
+            parse_env_value() {
+                local key=$1
+                grep -E "^${key}=" .env | cut -d'=' -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | sed 's/#.*//'
+            }
+
+            foundry_hostname=$(parse_env_value "FOUNDRY_HOSTNAME")
+            system_hostname=$(hostname)
+
+            # Check if hostname matches system hostname
+            if [ -n "$foundry_hostname" ] && [ "$foundry_hostname" != "$system_hostname" ]; then
+                echo
+                echo "[NOTICE] Hostname mismatch detected:"
+                echo "  Current system hostname: $system_hostname"
+                echo "  Configured hostname in .env: $foundry_hostname"
+                echo
+                read -p "Update hostname to match system ($system_hostname)? [Y/n]: " update_hostname
+                update_hostname=${update_hostname:-Y}
+
+                if [[ "$update_hostname" =~ ^[Yy]$ ]]; then
+                    # Update hostname in .env
+                    sed -i.bak "s/^FOUNDRY_HOSTNAME=.*/FOUNDRY_HOSTNAME=$system_hostname/" .env
+                    rm -f .env.bak
+                    echo "[OK] Hostname updated to $system_hostname"
+
+                    # Regenerate SSL certificate with new hostname
+                    if [ -f /etc/nginx/certs/foundry.crt ] || [ -f /etc/nginx/certs/foundry.key ]; then
+                        echo "Regenerating SSL certificate for new hostname..."
+                        sudo openssl req -x509 -nodes -days 3650 -newkey rsa:2048 \
+                            -keyout /etc/nginx/certs/foundry.key \
+                            -out /etc/nginx/certs/foundry.crt \
+                            -subj "/C=US/ST=State/L=City/O=Organization/CN=$system_hostname" \
+                            2>/dev/null
+
+                        # Reload nginx to use new certificate
+                        if systemctl is-active --quiet nginx 2>/dev/null; then
+                            sudo systemctl reload nginx
+                        fi
+                        echo "[OK] SSL certificate regenerated and nginx reloaded"
+                    fi
+
+                    foundry_hostname=$system_hostname
+                else
+                    echo "[INFO] Keeping configured hostname: $foundry_hostname"
+                fi
+            fi
+
+            # Skip to container startup (don't prompt for config)
+            skip_config=true
+            ;;
+        2)
             backup_file=".env.backup.$(date +%Y%m%d_%H%M%S)"
             cp .env "$backup_file"
             echo "[OK] Existing .env backed up to $backup_file"
+            skip_config=false
             ;;
-        2)
+        3)
             echo "Setup aborted."
             exit 0
             ;;
@@ -578,17 +571,83 @@ if [ -f .env ]; then
             exit 1
             ;;
     esac
+else
+    skip_config=false
 fi
 
-# Detect UID/GID for proper file permissions in Docker
-foundry_uid=$(id -u)
-foundry_gid=$(id -g)
+# Prompt for configuration if needed
+if [ "$skip_config" = false ]; then
+    echo
+    echo "=== Configuration ==="
+    echo
+    echo "Enter your Foundry VTT account credentials."
+    echo "These are used to download Foundry from your account."
+    echo
 
-# Create .env file
-echo
-echo "Creating configuration..."
+    while true; do
+        read -p "Foundry Username: " foundry_username
+        validate_non_empty "$foundry_username" "Username" && break
+    done
 
-cat > .env.incomplete << EOF
+    while true; do
+        read -sp "Foundry Password: " foundry_password
+        echo
+        validate_non_empty "$foundry_password" "Password" && break
+    done
+
+    echo
+    while true; do
+        read -p "Foundry Admin Key (password for the web UI): " foundry_admin_key
+        validate_non_empty "$foundry_admin_key" "Admin key" && break
+    done
+
+    echo
+    echo "Foundry Version:"
+    echo "  - Press Enter for latest stable"
+    echo "  - Or enter a major version number (e.g., 12, 13)"
+    while true; do
+        read -p "Version [latest]: " foundry_docker_tag
+        if [ -z "$foundry_docker_tag" ] || [ "$foundry_docker_tag" = "latest" ]; then
+            foundry_docker_tag="release"
+        fi
+        validate_version "$foundry_docker_tag" && break
+    done
+
+    echo
+    # Auto-detect system hostname for mDNS
+    system_hostname=$(hostname)
+    echo "Hostname for this server:"
+    echo "  - Detected system hostname: $system_hostname"
+    echo "  - This hostname will work automatically via mDNS (no DNS setup needed)"
+    echo "  - Or enter a different hostname (will require DNS/Pi-hole configuration)"
+    echo
+    while true; do
+        read -p "Hostname [$system_hostname]: " foundry_hostname
+        foundry_hostname=${foundry_hostname:-$system_hostname}
+        validate_hostname "$foundry_hostname" && break
+    done
+
+    # Warn if using custom hostname
+    if [ "$foundry_hostname" != "$system_hostname" ]; then
+        echo
+        echo "[NOTE] You chose '$foundry_hostname' instead of '$system_hostname'"
+        echo "       This will require DNS configuration (like Pi-hole) to resolve."
+        echo "       Without DNS, you'll need to use the server's IP address."
+        echo
+    fi
+
+    read -p "Timezone [America/New_York]: " timezone
+    timezone=${timezone:-America/New_York}
+
+    # Detect UID/GID for proper file permissions in Docker
+    foundry_uid=$(id -u)
+    foundry_gid=$(id -g)
+
+    # Create .env file
+    echo
+    echo "Creating configuration..."
+
+    cat > .env.incomplete << EOF
 # Foundry account credentials
 FOUNDRY_USERNAME=$foundry_username
 FOUNDRY_PASSWORD=$foundry_password
@@ -613,10 +672,11 @@ FOUNDRY_UID=$foundry_uid
 FOUNDRY_GID=$foundry_gid
 EOF
 
-# Move to final location and set permissions
-mv .env.incomplete .env
-chmod 600 .env
-echo "[OK] .env file created with secure permissions (600)"
+    # Move to final location and set permissions
+    mv .env.incomplete .env
+    chmod 600 .env
+    echo "[OK] .env file created with secure permissions (600)"
+fi
 
 #Configure nginx reverse proxy with HTTPS
 echo

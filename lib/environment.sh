@@ -51,12 +51,16 @@ _detect_lxc() {
 
 # Detect if running on AWS EC2
 _detect_ec2() {
-    # Method 1: Check EC2 metadata service (with timeout)
-    if curl -s --connect-timeout 1 -m 2 http://169.254.169.254/latest/meta-data/ &>/dev/null; then
-        return 0
+    # Skip EC2 detection if we're in an LXC container (mutually exclusive)
+    # This avoids the slow curl timeout in LXC environments
+    if [ -f /proc/1/environ ] && grep -qa 'container=lxc' /proc/1/environ 2>/dev/null; then
+        return 1
+    fi
+    if [ -f /proc/1/cgroup ] && grep -qa 'lxc' /proc/1/cgroup 2>/dev/null; then
+        return 1
     fi
 
-    # Method 2: Check DMI data for Amazon/EC2
+    # Method 1: Check DMI data for Amazon/EC2 (fast, no network)
     if [ -f /sys/devices/virtual/dmi/id/sys_vendor ]; then
         local vendor
         vendor=$(cat /sys/devices/virtual/dmi/id/sys_vendor 2>/dev/null)
@@ -73,8 +77,14 @@ _detect_ec2() {
         fi
     fi
 
-    # Method 3: Check for EC2-specific files
+    # Method 2: Check for EC2-specific files
     if [ -f /sys/hypervisor/uuid ] && grep -qi '^ec2' /sys/hypervisor/uuid 2>/dev/null; then
+        return 0
+    fi
+
+    # Method 3: Check EC2 metadata service (slow, has network timeout)
+    # Only try this if DMI checks didn't find anything
+    if curl -s --connect-timeout 1 -m 2 http://169.254.169.254/latest/meta-data/ &>/dev/null; then
         return 0
     fi
 

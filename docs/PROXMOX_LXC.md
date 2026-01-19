@@ -5,8 +5,8 @@ This guide explains how to run FoundryDeploy inside a Proxmox LXC container. Whi
 ## Quick Start
 
 1. Create a **privileged** Debian 12 or Ubuntu 22.04 LXC container
-2. Enable **nesting** and **keyctl** features
-3. Configure AppArmor profile
+2. Enable **nesting** feature (via SSH if not using root@pam)
+3. Configure AppArmor (host config + remove inside container)
 4. Install Docker inside the container
 5. Run FoundryDeploy setup
 
@@ -64,7 +64,16 @@ pct create 200 local:vztmpl/debian-12-standard_12.2-1_amd64.tar.zst \
 
 ### Enabling Docker Support Features
 
-Edit the container configuration on the **Proxmox host**:
+**Important:** Proxmox only allows `root@pam` to modify privileged container features via the web UI. If you're using a different admin user, you'll see: `Permission check failed (changing feature flags for privileged container is only allowed for root@pam)`
+
+**Workaround:** Edit the container config directly via SSH on the Proxmox host:
+
+```bash
+# SSH to Proxmox host and edit container config (replace 200 with your CT ID)
+sudo bash -c 'echo "features: nesting=1" >> /etc/pve/lxc/200.conf'
+```
+
+Or edit manually:
 
 ```bash
 # Edit container config (replace 200 with your CT ID)
@@ -145,6 +154,12 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.
 apt update
 apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
+# Fix AppArmor (required for Docker in LXC)
+systemctl stop apparmor
+systemctl disable apparmor
+apt remove -y apparmor
+systemctl restart docker
+
 # Verify Docker works
 docker run --rm hello-world
 ```
@@ -195,6 +210,27 @@ grep apparmor /etc/pve/lxc/200.conf
 ```bash
 journalctl -u docker -n 50
 ```
+
+### AppArmor Profile Errors
+
+**Symptom:** `AppArmor enabled on system but the docker-default profile could not be loaded`
+
+This error occurs because LXC containers cannot load AppArmor profiles even with `lxc.apparmor.profile: unconfined` in the host config.
+
+**Solution:** Remove AppArmor inside the container:
+
+```bash
+# Inside the container
+systemctl stop apparmor
+systemctl disable apparmor
+apt remove -y apparmor
+systemctl restart docker
+
+# Verify Docker works
+docker run --rm hello-world
+```
+
+**Note:** This is required in addition to the host-side AppArmor configuration. The host config alone is not sufficient.
 
 ### Overlay Filesystem Errors
 

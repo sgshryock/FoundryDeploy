@@ -422,3 +422,56 @@ format_duration() {
         echo "$seconds seconds"
     fi
 }
+
+# Get primary IP address of the system
+# Returns the first non-loopback IPv4 address
+get_primary_ip() {
+    local ip=""
+
+    # Method 1: hostname -I (most reliable on Linux)
+    if command -v hostname &>/dev/null; then
+        ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
+
+    # Method 2: ip command fallback
+    if [ -z "$ip" ] && command -v ip &>/dev/null; then
+        ip=$(ip route get 1 2>/dev/null | awk '{print $7; exit}')
+    fi
+
+    # Method 3: ifconfig fallback
+    if [ -z "$ip" ] && command -v ifconfig &>/dev/null; then
+        ip=$(ifconfig 2>/dev/null | grep -Eo 'inet (addr:)?([0-9]*\.){3}[0-9]*' | grep -v '127.0.0.1' | head -1 | awk '{print $2}' | sed 's/addr://')
+    fi
+
+    echo "$ip"
+}
+
+# Get the access URL for Foundry based on environment
+# For LXC containers, returns IP-based URL since hostname often isn't resolvable
+# For other environments, returns hostname-based URL
+# Usage: url=$(get_access_url "$hostname")
+get_access_url() {
+    local hostname="${1:-$(hostname)}"
+    local ip
+
+    # For Proxmox LXC, prefer IP since container hostnames typically aren't in DNS
+    if [ "$DEPLOY_ENV_TYPE" = "proxmox_lxc" ]; then
+        ip=$(get_primary_ip)
+        if [ -n "$ip" ]; then
+            echo "https://$ip"
+            return
+        fi
+    fi
+
+    # For EC2, use public IP if available
+    if [ "$DEPLOY_ENV_TYPE" = "aws_ec2" ]; then
+        ip=$(get_ec2_public_ip)
+        if [ -n "$ip" ]; then
+            echo "https://$ip"
+            return
+        fi
+    fi
+
+    # Default to hostname
+    echo "https://$hostname"
+}

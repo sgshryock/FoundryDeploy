@@ -121,7 +121,7 @@ echo
 echo "=== Foundry VTT Started ==="
 echo
 FOUNDRY_HOSTNAME=$(parse_env_value "FOUNDRY_HOSTNAME")
-echo "Access Foundry at: https://${FOUNDRY_HOSTNAME}"
+echo "Access Foundry at: $(get_access_url "$FOUNDRY_HOSTNAME")"
 echo
 echo "View logs with:"
 echo "  ./logs"

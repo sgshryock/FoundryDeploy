@@ -340,6 +340,34 @@ else
 fi
 
 # =============================================================================
+# Test: IP and URL functions exist
+# =============================================================================
+run_test
+if type get_primary_ip &>/dev/null; then
+    pass "get_primary_ip function exists"
+else
+    fail "get_primary_ip function should exist" "defined" "undefined"
+fi
+
+run_test
+if type get_access_url &>/dev/null; then
+    pass "get_access_url function exists"
+else
+    fail "get_access_url function should exist" "defined" "undefined"
+fi
+
+# =============================================================================
+# Test: get_access_url returns valid URL
+# =============================================================================
+run_test
+result=$(get_access_url "testhost")
+if [[ "$result" == "https://"* ]]; then
+    pass "get_access_url returns https URL: $result"
+else
+    fail "get_access_url should return https URL" "https://*" "$result"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 echo

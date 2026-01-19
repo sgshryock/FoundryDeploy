@@ -812,7 +812,7 @@ echo "=== Setup Complete ==="
 echo
 echo "Foundry VTT is now starting. It may take a few minutes to download and initialize."
 echo
-echo "Access Foundry at: https://$foundry_hostname"
+echo "Access Foundry at: $(get_access_url "$foundry_hostname")"
 echo "  (Note: You'll see a security warning due to the self-signed certificate)"
 echo "  (Click 'Advanced' and 'Proceed' to accept the certificate)"
 echo

@@ -263,7 +263,7 @@ restore_backup() {
         hostname=$(parse_env_value "FOUNDRY_HOSTNAME")
         if [ -n "$hostname" ]; then
             echo
-            echo "Access Foundry at: https://$hostname"
+            echo "Access Foundry at: $(get_access_url "$hostname")"
         fi
     else
         log_warn "Foundry may still be starting"

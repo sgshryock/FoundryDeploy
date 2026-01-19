@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+set -o pipefail
 
 REPO_URL="https://github.com/sgshryock/FoundryDeploy.git"
 
@@ -465,7 +466,18 @@ if [ "$skip_config" = false ]; then
     echo
     while true; do
         read -p "Foundry Admin Key (password for the web UI): " foundry_admin_key
-        validate_non_empty "$foundry_admin_key" "Admin key" && break
+        if ! validate_non_empty "$foundry_admin_key" "Admin key"; then
+            continue
+        fi
+        # Validate minimum length
+        if [ ${#foundry_admin_key} -lt 8 ]; then
+            echo "[ERROR] Admin key must be at least 8 characters"
+            continue
+        fi
+        if [ ${#foundry_admin_key} -lt 12 ]; then
+            echo "[WARN] Admin key is short. Consider using 12+ characters for better security."
+        fi
+        break
     done
 
     echo
@@ -580,6 +592,10 @@ if [ "$regenerate_cert" = true ]; then
         -out /etc/nginx/certs/foundry.crt \
         -subj "/C=US/ST=State/L=City/O=Organization/CN=$foundry_hostname" \
         2>/dev/null
+
+    # Set secure permissions on certificate files
+    sudo chmod 644 /etc/nginx/certs/foundry.crt
+    sudo chmod 600 /etc/nginx/certs/foundry.key
     echo "[OK] SSL certificate generated (valid for 10 years)"
 
     # Reload nginx if it's running to use new certificate
@@ -602,8 +618,23 @@ server {
   listen 443 ssl default_server;
   server_name _;
 
+  # SSL Certificate
   ssl_certificate     /etc/nginx/certs/foundry.crt;
   ssl_certificate_key /etc/nginx/certs/foundry.key;
+
+  # Modern TLS configuration
+  ssl_protocols TLSv1.2 TLSv1.3;
+  ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384';
+  ssl_prefer_server_ciphers on;
+  ssl_session_cache shared:SSL:10m;
+  ssl_session_timeout 10m;
+
+  # Security headers
+  add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+  add_header X-Frame-Options "SAMEORIGIN" always;
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header X-XSS-Protection "1; mode=block" always;
+  add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
   client_max_body_size 300m;
 
@@ -647,7 +678,7 @@ echo "[OK] nginx configured and running"
 echo
 # Get the actual volume name created by Docker Compose (includes project name prefix)
 VOLUME_NAME=$(docker compose config --format json | grep -o '"foundry_data"' | head -1 | tr -d '"' || echo "foundry_data")
-FULL_VOLUME_NAME="$(basename $(pwd) | tr '[:upper:]' '[:lower:]')_${VOLUME_NAME}"
+FULL_VOLUME_NAME="$(basename "$(pwd)" | tr '[:upper:]' '[:lower:]')_${VOLUME_NAME}"
 
 # Get version from .env if it exists
 if [ -f .env ]; then

@@ -1,0 +1,261 @@
+#!/bin/bash
+set -e
+set -o pipefail
+
+# Source common functions
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
+
+# Configuration
+BACKUP_DIR="$SCRIPT_DIR/backups"
+DEFAULT_RETENTION=7  # Keep last 7 backups by default
+
+# =============================================================================
+# Functions
+# =============================================================================
+
+show_usage() {
+    echo "Usage: $0 [command]"
+    echo
+    echo "Commands:"
+    echo "  (none)    Create a new backup"
+    echo "  list      Show available backups"
+    echo "  cleanup   Remove old backups (keeps last $DEFAULT_RETENTION)"
+    echo "  help      Show this help message"
+    echo
+    echo "Options:"
+    echo "  --keep N  Keep last N backups during cleanup (default: $DEFAULT_RETENTION)"
+    echo
+}
+
+create_backup() {
+    echo "=== Creating Foundry VTT Backup ==="
+    echo
+
+    # Check prerequisites
+    require_env_file || exit 1
+    check_docker || exit 1
+    check_docker_daemon || exit 1
+
+    # Create backup directory
+    mkdir -p "$BACKUP_DIR"
+
+    # Generate backup filename with timestamp
+    timestamp=$(date +%Y%m%d_%H%M%S)
+    backup_name="foundry-backup-${timestamp}"
+    backup_file="$BACKUP_DIR/${backup_name}.tar.gz"
+    temp_dir=$(mktemp -d)
+
+    # Cleanup temp directory on exit
+    trap "rm -rf '$temp_dir'" EXIT
+
+    echo "Backup location: $backup_file"
+    echo
+
+    # Get volume name
+    volume_name=$(get_volume_name "foundry_data")
+
+    # Check if volume exists
+    if ! docker volume inspect "$volume_name" &>/dev/null; then
+        log_error "Foundry data volume not found: $volume_name"
+        echo "  Run ./setup first to initialize Foundry"
+        exit 1
+    fi
+
+    # Check if containers are running
+    container_was_running=false
+    if is_foundry_running; then
+        container_was_running=true
+        log_info "Stopping Foundry for consistent backup..."
+        docker compose stop foundry
+        echo
+    fi
+
+    # Backup Docker volume
+    log_info "Backing up Foundry data volume..."
+    docker run --rm \
+        -v "${volume_name}:/data:ro" \
+        -v "${temp_dir}:/backup" \
+        alpine:3.20 \
+        tar czf "/backup/data.tar.gz" -C /data .
+
+    if [ ! -f "$temp_dir/data.tar.gz" ]; then
+        log_error "Failed to create volume backup"
+        exit 1
+    fi
+
+    volume_size=$(stat -f%z "$temp_dir/data.tar.gz" 2>/dev/null || stat -c%s "$temp_dir/data.tar.gz" 2>/dev/null)
+    log_ok "Volume backup created ($(format_bytes "$volume_size"))"
+
+    # Backup .env file (with sensitive data warning)
+    log_info "Backing up configuration..."
+    cp .env "$temp_dir/env.backup"
+    log_ok "Configuration backed up"
+
+    # Create metadata file
+    cat > "$temp_dir/backup.info" << EOF
+Backup created: $(date -Iseconds)
+Foundry version: $(parse_env_value "FOUNDRY_DOCKER_TAG")
+Hostname: $(parse_env_value "FOUNDRY_HOSTNAME")
+System hostname: $(hostname)
+Volume name: $volume_name
+EOF
+
+    # Create final backup archive
+    log_info "Creating backup archive..."
+    tar czf "$backup_file" -C "$temp_dir" .
+
+    # Verify backup was created
+    if [ ! -f "$backup_file" ]; then
+        log_error "Failed to create backup archive"
+        exit 1
+    fi
+
+    backup_size=$(stat -f%z "$backup_file" 2>/dev/null || stat -c%s "$backup_file" 2>/dev/null)
+
+    # Restart container if it was running
+    if [ "$container_was_running" = true ]; then
+        log_info "Restarting Foundry..."
+        docker compose start foundry
+    fi
+
+    echo
+    echo "=== Backup Complete ==="
+    echo
+    log_ok "Backup saved to: $backup_file"
+    echo "  Size: $(format_bytes "$backup_size")"
+    echo
+    echo "To restore this backup, run:"
+    echo "  ./restore ${backup_name}.tar.gz"
+    echo
+}
+
+list_backups() {
+    echo "=== Available Backups ==="
+    echo
+
+    if [ ! -d "$BACKUP_DIR" ]; then
+        log_info "No backups directory found"
+        echo "  Run ./backup to create your first backup"
+        return
+    fi
+
+    # Find all backup files
+    backup_files=$(find "$BACKUP_DIR" -name "foundry-backup-*.tar.gz" -type f 2>/dev/null | sort -r)
+
+    if [ -z "$backup_files" ]; then
+        log_info "No backups found"
+        echo "  Run ./backup to create your first backup"
+        return
+    fi
+
+    # List backups with details
+    count=0
+    total_size=0
+
+    printf "%-40s %10s %20s\n" "Backup Name" "Size" "Created"
+    printf "%-40s %10s %20s\n" "$(printf '%0.s-' {1..40})" "$(printf '%0.s-' {1..10})" "$(printf '%0.s-' {1..20})"
+
+    while IFS= read -r backup_path; do
+        name=$(basename "$backup_path")
+        size=$(stat -f%z "$backup_path" 2>/dev/null || stat -c%s "$backup_path" 2>/dev/null)
+        mod_time=$(stat -f%Sm -t "%Y-%m-%d %H:%M" "$backup_path" 2>/dev/null || stat -c%y "$backup_path" 2>/dev/null | cut -d. -f1)
+
+        printf "%-40s %10s %20s\n" "$name" "$(format_bytes "$size")" "$mod_time"
+
+        count=$((count + 1))
+        total_size=$((total_size + size))
+    done <<< "$backup_files"
+
+    echo
+    echo "Total: $count backup(s), $(format_bytes $total_size)"
+    echo
+}
+
+cleanup_backups() {
+    local keep=${1:-$DEFAULT_RETENTION}
+
+    echo "=== Cleaning Up Old Backups ==="
+    echo
+
+    if [ ! -d "$BACKUP_DIR" ]; then
+        log_info "No backups directory found"
+        return
+    fi
+
+    # Get sorted list of backups (newest first)
+    backup_files=$(find "$BACKUP_DIR" -name "foundry-backup-*.tar.gz" -type f 2>/dev/null | sort -r)
+
+    if [ -z "$backup_files" ]; then
+        log_info "No backups found"
+        return
+    fi
+
+    count=0
+    deleted=0
+    freed=0
+
+    while IFS= read -r backup_path; do
+        count=$((count + 1))
+
+        if [ $count -gt "$keep" ]; then
+            name=$(basename "$backup_path")
+            size=$(stat -f%z "$backup_path" 2>/dev/null || stat -c%s "$backup_path" 2>/dev/null)
+
+            log_info "Removing: $name"
+            rm -f "$backup_path"
+
+            deleted=$((deleted + 1))
+            freed=$((freed + size))
+        fi
+    done <<< "$backup_files"
+
+    echo
+    if [ $deleted -gt 0 ]; then
+        log_ok "Removed $deleted old backup(s), freed $(format_bytes $freed)"
+    else
+        log_ok "No old backups to remove (keeping last $keep)"
+    fi
+
+    echo "Remaining backups: $((count - deleted))"
+    echo
+}
+
+# =============================================================================
+# Main
+# =============================================================================
+
+case "${1:-}" in
+    list)
+        list_backups
+        ;;
+    cleanup)
+        shift
+        keep=$DEFAULT_RETENTION
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --keep)
+                    keep="$2"
+                    shift 2
+                    ;;
+                *)
+                    log_error "Unknown option: $1"
+                    show_usage
+                    exit 1
+                    ;;
+            esac
+        done
+        cleanup_backups "$keep"
+        ;;
+    help|--help|-h)
+        show_usage
+        ;;
+    "")
+        create_backup
+        ;;
+    *)
+        log_error "Unknown command: $1"
+        show_usage
+        exit 1
+        ;;
+esac

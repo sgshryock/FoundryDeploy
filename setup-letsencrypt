@@ -1,0 +1,411 @@
+#!/bin/bash
+set -e
+set -o pipefail
+
+# Source common functions
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
+
+# Configuration
+CERT_PATH="/etc/nginx/certs/foundry.crt"
+KEY_PATH="/etc/nginx/certs/foundry.key"
+BACKUP_CERT_PATH="/etc/nginx/certs/foundry.crt.self-signed"
+BACKUP_KEY_PATH="/etc/nginx/certs/foundry.key.self-signed"
+
+# =============================================================================
+# Functions
+# =============================================================================
+
+show_usage() {
+    echo "Usage: $0 [options]"
+    echo
+    echo "Options:"
+    echo "  --domain DOMAIN    Domain name for the certificate (required)"
+    echo "  --email EMAIL      Email for Let's Encrypt notifications (required)"
+    echo "  --staging          Use Let's Encrypt staging environment (for testing)"
+    echo "  --rollback         Rollback to self-signed certificate"
+    echo "  --renew            Manually trigger certificate renewal"
+    echo "  --status           Show certificate status"
+    echo "  help               Show this help message"
+    echo
+    echo "Prerequisites:"
+    echo "  - Domain must be publicly accessible on port 80"
+    echo "  - DNS must point to this server"
+    echo "  - Port 80 must not be blocked by firewall"
+    echo
+}
+
+check_prerequisites() {
+    # Check certbot is installed
+    if ! command -v certbot &>/dev/null; then
+        log_error "certbot is not installed"
+        echo
+        echo "Install certbot with:"
+        echo "  # Debian/Ubuntu:"
+        echo "  sudo apt install certbot python3-certbot-nginx"
+        echo
+        echo "  # Fedora:"
+        echo "  sudo dnf install certbot python3-certbot-nginx"
+        echo
+        echo "  # Arch:"
+        echo "  sudo pacman -S certbot certbot-nginx"
+        echo
+        return 1
+    fi
+    log_ok "certbot is installed"
+
+    # Check nginx is installed and running
+    if ! command -v nginx &>/dev/null; then
+        log_error "nginx is not installed"
+        return 1
+    fi
+    log_ok "nginx is installed"
+
+    if ! is_nginx_running; then
+        log_error "nginx is not running"
+        echo "  Start it with: sudo systemctl start nginx"
+        return 1
+    fi
+    log_ok "nginx is running"
+
+    # Check .env file exists
+    require_env_file || return 1
+
+    return 0
+}
+
+validate_domain() {
+    local domain=$1
+
+    # Basic domain format validation
+    if ! [[ "$domain" =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$ ]]; then
+        log_error "Invalid domain format: $domain"
+        return 1
+    fi
+
+    # Check domain resolves
+    log_info "Checking DNS resolution for $domain..."
+    if ! host "$domain" &>/dev/null; then
+        log_error "Domain $domain does not resolve"
+        echo "  Make sure DNS is configured to point to this server"
+        return 1
+    fi
+    log_ok "Domain resolves"
+
+    # Check if domain points to this server (basic check)
+    log_info "Verifying domain accessibility..."
+    local server_ip
+    server_ip=$(hostname -I 2>/dev/null | awk '{print $1}' || echo "")
+
+    local domain_ip
+    domain_ip=$(dig +short "$domain" 2>/dev/null | head -1 || echo "")
+
+    if [ -n "$server_ip" ] && [ -n "$domain_ip" ] && [ "$server_ip" != "$domain_ip" ]; then
+        log_warn "Domain IP ($domain_ip) may not match server IP ($server_ip)"
+        echo "  This might be expected if using a proxy or load balancer"
+    fi
+
+    return 0
+}
+
+backup_self_signed() {
+    if [ -f "$CERT_PATH" ] && [ ! -f "$BACKUP_CERT_PATH" ]; then
+        log_info "Backing up self-signed certificate..."
+        sudo cp "$CERT_PATH" "$BACKUP_CERT_PATH"
+        sudo cp "$KEY_PATH" "$BACKUP_KEY_PATH"
+        log_ok "Self-signed certificate backed up"
+    fi
+}
+
+restore_self_signed() {
+    if [ -f "$BACKUP_CERT_PATH" ]; then
+        log_info "Restoring self-signed certificate..."
+        sudo cp "$BACKUP_CERT_PATH" "$CERT_PATH"
+        sudo cp "$BACKUP_KEY_PATH" "$KEY_PATH"
+        sudo systemctl reload nginx
+        log_ok "Self-signed certificate restored"
+    else
+        log_error "No self-signed certificate backup found"
+        return 1
+    fi
+}
+
+obtain_certificate() {
+    local domain=$1
+    local email=$2
+    local staging=${3:-false}
+
+    echo
+    echo "=== Obtaining Let's Encrypt Certificate ==="
+    echo
+
+    # Validate domain
+    validate_domain "$domain" || return 1
+
+    # Backup existing certificate
+    backup_self_signed
+
+    # Build certbot command
+    local certbot_args=(
+        certonly
+        --nginx
+        --non-interactive
+        --agree-tos
+        --email "$email"
+        -d "$domain"
+    )
+
+    if [ "$staging" = true ]; then
+        certbot_args+=(--staging)
+        log_warn "Using staging environment (certificates will not be trusted)"
+    fi
+
+    # Obtain certificate
+    log_info "Requesting certificate from Let's Encrypt..."
+    if sudo certbot "${certbot_args[@]}"; then
+        log_ok "Certificate obtained successfully"
+    else
+        log_error "Failed to obtain certificate"
+        echo
+        echo "Common issues:"
+        echo "  - Port 80 is blocked by firewall"
+        echo "  - Domain does not point to this server"
+        echo "  - Rate limiting (too many requests)"
+        echo
+        return 1
+    fi
+
+    # Update nginx to use Let's Encrypt certificate
+    local le_cert="/etc/letsencrypt/live/$domain/fullchain.pem"
+    local le_key="/etc/letsencrypt/live/$domain/privkey.pem"
+
+    if [ -f "$le_cert" ] && [ -f "$le_key" ]; then
+        log_info "Updating nginx configuration..."
+
+        # Create symlinks to Let's Encrypt certificates
+        sudo ln -sf "$le_cert" "$CERT_PATH"
+        sudo ln -sf "$le_key" "$KEY_PATH"
+
+        # Reload nginx
+        sudo systemctl reload nginx
+        log_ok "nginx updated with Let's Encrypt certificate"
+    else
+        log_error "Certificate files not found"
+        return 1
+    fi
+
+    # Set up auto-renewal
+    setup_auto_renewal "$domain"
+
+    echo
+    echo "=== Let's Encrypt Setup Complete ==="
+    echo
+    log_ok "Certificate installed for $domain"
+    echo
+    echo "Certificate will auto-renew before expiration."
+    echo "To manually renew: ./setup-letsencrypt --renew"
+    echo "To rollback to self-signed: ./setup-letsencrypt --rollback"
+    echo
+}
+
+setup_auto_renewal() {
+    local domain=$1
+
+    log_info "Configuring auto-renewal..."
+
+    # Check if systemd timer exists (certbot usually sets this up)
+    if systemctl list-timers 2>/dev/null | grep -q certbot; then
+        log_ok "Certbot renewal timer is already active"
+        return
+    fi
+
+    # Create systemd timer if not exists
+    if [ ! -f /etc/systemd/system/certbot-renewal.timer ]; then
+        log_info "Creating renewal timer..."
+
+        sudo tee /etc/systemd/system/certbot-renewal.service >/dev/null << 'EOF'
+[Unit]
+Description=Certbot Renewal
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/certbot renew --quiet --deploy-hook "systemctl reload nginx"
+EOF
+
+        sudo tee /etc/systemd/system/certbot-renewal.timer >/dev/null << 'EOF'
+[Unit]
+Description=Run certbot twice daily
+
+[Timer]
+OnCalendar=*-*-* 00,12:00:00
+RandomizedDelaySec=43200
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+        sudo systemctl daemon-reload
+        sudo systemctl enable --now certbot-renewal.timer
+        log_ok "Auto-renewal timer configured"
+    fi
+}
+
+manual_renew() {
+    echo "=== Renewing Let's Encrypt Certificate ==="
+    echo
+
+    log_info "Attempting certificate renewal..."
+
+    if sudo certbot renew --quiet; then
+        sudo systemctl reload nginx
+        log_ok "Certificate renewed successfully"
+    else
+        log_warn "No certificates due for renewal or renewal failed"
+        echo "  Certificates are typically renewed 30 days before expiration"
+    fi
+}
+
+show_status() {
+    echo "=== Certificate Status ==="
+    echo
+
+    if [ -L "$CERT_PATH" ]; then
+        # It's a symlink, likely Let's Encrypt
+        local target
+        target=$(readlink -f "$CERT_PATH" 2>/dev/null)
+
+        if [[ "$target" == *"letsencrypt"* ]]; then
+            log_ok "Using Let's Encrypt certificate"
+            echo "  Path: $target"
+        else
+            log_info "Using certificate: $target"
+        fi
+    elif [ -f "$CERT_PATH" ]; then
+        log_info "Using self-signed certificate"
+    else
+        log_error "No certificate found"
+        return 1
+    fi
+
+    # Show expiration
+    echo
+    echo "Certificate details:"
+    expiry=$(get_cert_expiry "$CERT_PATH")
+    if [ -n "$expiry" ]; then
+        echo "  Expires: $expiry"
+
+        if check_cert_valid "$CERT_PATH" 30; then
+            log_ok "Certificate valid for 30+ days"
+        elif check_cert_valid "$CERT_PATH" 7; then
+            log_warn "Certificate expires within 30 days"
+        else
+            log_error "Certificate expired or expires within 7 days"
+        fi
+    fi
+
+    # Show issuer
+    issuer=$(sudo openssl x509 -issuer -noout -in "$CERT_PATH" 2>/dev/null)
+    if [ -n "$issuer" ]; then
+        echo "  Issuer: $(echo "$issuer" | sed 's/issuer=//')"
+    fi
+
+    # Show backup status
+    echo
+    if [ -f "$BACKUP_CERT_PATH" ]; then
+        log_ok "Self-signed certificate backup available"
+        echo "  Rollback with: ./setup-letsencrypt --rollback"
+    else
+        log_info "No self-signed certificate backup"
+    fi
+
+    # Show renewal timer status
+    echo
+    if systemctl is-active --quiet certbot-renewal.timer 2>/dev/null || \
+       systemctl list-timers 2>/dev/null | grep -q certbot; then
+        log_ok "Auto-renewal is configured"
+    else
+        log_warn "Auto-renewal timer not found"
+    fi
+
+    echo
+}
+
+# =============================================================================
+# Main
+# =============================================================================
+
+# Parse arguments
+domain=""
+email=""
+staging=false
+action="obtain"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --domain)
+            domain="$2"
+            shift 2
+            ;;
+        --email)
+            email="$2"
+            shift 2
+            ;;
+        --staging)
+            staging=true
+            shift
+            ;;
+        --rollback)
+            action="rollback"
+            shift
+            ;;
+        --renew)
+            action="renew"
+            shift
+            ;;
+        --status)
+            action="status"
+            shift
+            ;;
+        help|--help|-h)
+            show_usage
+            exit 0
+            ;;
+        *)
+            log_error "Unknown option: $1"
+            show_usage
+            exit 1
+            ;;
+    esac
+done
+
+# Execute action
+case "$action" in
+    obtain)
+        # Validate required arguments
+        if [ -z "$domain" ]; then
+            log_error "Domain is required"
+            echo "  Use: ./setup-letsencrypt --domain example.com --email you@example.com"
+            exit 1
+        fi
+
+        if [ -z "$email" ]; then
+            log_error "Email is required"
+            echo "  Use: ./setup-letsencrypt --domain example.com --email you@example.com"
+            exit 1
+        fi
+
+        check_prerequisites || exit 1
+        obtain_certificate "$domain" "$email" "$staging"
+        ;;
+    rollback)
+        restore_self_signed
+        ;;
+    renew)
+        manual_renew
+        ;;
+    status)
+        show_status
+        ;;
+esac

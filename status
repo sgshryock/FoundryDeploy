@@ -1,0 +1,298 @@
+#!/bin/bash
+set -e
+set -o pipefail
+
+# Source common functions
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
+
+echo "=== Foundry VTT Status ==="
+echo
+
+# Track overall status
+overall_status=0
+
+# =============================================================================
+# Configuration Status
+# =============================================================================
+echo "Configuration:"
+
+if [ -f .env ]; then
+    log_ok ".env file exists"
+
+    # Check required variables
+    missing_vars=()
+    for var in FOUNDRY_USERNAME FOUNDRY_PASSWORD FOUNDRY_ADMIN_KEY FOUNDRY_HOSTNAME; do
+        value=$(parse_env_value "$var")
+        if [ -z "$value" ]; then
+            missing_vars+=("$var")
+        fi
+    done
+
+    if [ ${#missing_vars[@]} -eq 0 ]; then
+        log_ok "All required variables configured"
+    else
+        log_warn "Missing variables: ${missing_vars[*]}"
+        overall_status=1
+    fi
+
+    # Show configured values (masked)
+    hostname=$(parse_env_value "FOUNDRY_HOSTNAME")
+    version=$(parse_env_value "FOUNDRY_DOCKER_TAG")
+    echo "  Hostname: ${hostname:-not set}"
+    echo "  Version: ${version:-release}"
+else
+    log_error ".env file not found - run ./setup first"
+    overall_status=1
+fi
+
+echo
+
+# =============================================================================
+# Docker Status
+# =============================================================================
+echo "Docker:"
+
+if check_docker; then
+    log_ok "Docker installed"
+else
+    overall_status=1
+fi
+
+if check_docker_daemon; then
+    log_ok "Docker daemon running"
+else
+    overall_status=1
+fi
+
+if check_docker_compose; then
+    log_ok "Docker Compose available ($DOCKER_COMPOSE_CMD)"
+else
+    overall_status=1
+fi
+
+echo
+
+# =============================================================================
+# Container Status
+# =============================================================================
+echo "Containers:"
+
+if docker compose ps &>/dev/null; then
+    # Check foundry container
+    foundry_status=$(docker compose ps --format json 2>/dev/null | grep -o '"State":"[^"]*"' | head -1 | cut -d'"' -f4 || echo "unknown")
+
+    if [ "$foundry_status" = "running" ]; then
+        # Check health status
+        health=$(docker inspect --format='{{.State.Health.Status}}' foundry 2>/dev/null || echo "unknown")
+
+        case "$health" in
+            healthy)
+                log_ok "Foundry container: running (healthy)"
+                ;;
+            unhealthy)
+                log_warn "Foundry container: running (unhealthy)"
+                overall_status=1
+                ;;
+            starting)
+                log_info "Foundry container: running (health check starting)"
+                ;;
+            *)
+                log_ok "Foundry container: running"
+                ;;
+        esac
+
+        # Show uptime
+        started=$(docker inspect --format='{{.State.StartedAt}}' foundry 2>/dev/null)
+        if [ -n "$started" ]; then
+            started_epoch=$(date -d "$started" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%S" "${started%%.*}" +%s 2>/dev/null)
+            if [ -n "$started_epoch" ]; then
+                now_epoch=$(date +%s)
+                uptime=$((now_epoch - started_epoch))
+                echo "  Uptime: $(format_duration $uptime)"
+            fi
+        fi
+    elif [ "$foundry_status" = "exited" ]; then
+        log_error "Foundry container: stopped"
+        overall_status=1
+    elif [ "$foundry_status" = "restarting" ]; then
+        log_error "Foundry container: restarting (crash loop)"
+        overall_status=1
+    else
+        log_warn "Foundry container: $foundry_status"
+        overall_status=1
+    fi
+else
+    log_error "Foundry container: not deployed"
+    overall_status=1
+fi
+
+echo
+
+# =============================================================================
+# nginx Status
+# =============================================================================
+echo "nginx:"
+
+if command -v nginx &>/dev/null; then
+    log_ok "nginx installed"
+else
+    log_error "nginx not installed"
+    overall_status=1
+fi
+
+if is_nginx_running; then
+    log_ok "nginx service: running"
+else
+    log_error "nginx service: stopped"
+    overall_status=1
+fi
+
+# Check nginx config exists
+if [ -f /etc/nginx/sites-enabled/foundry ]; then
+    log_ok "Foundry site config: enabled"
+else
+    log_warn "Foundry site config: not found"
+    overall_status=1
+fi
+
+echo
+
+# =============================================================================
+# SSL Certificate Status
+# =============================================================================
+echo "SSL Certificate:"
+
+cert_path="/etc/nginx/certs/foundry.crt"
+key_path="/etc/nginx/certs/foundry.key"
+
+if [ -f "$cert_path" ] && [ -f "$key_path" ]; then
+    log_ok "Certificate files exist"
+
+    # Check expiration
+    expiry=$(get_cert_expiry "$cert_path")
+    if [ -n "$expiry" ]; then
+        echo "  Expires: $expiry"
+
+        # Check if expiring soon
+        if check_cert_valid "$cert_path" 30; then
+            log_ok "Certificate valid for 30+ days"
+        elif check_cert_valid "$cert_path" 7; then
+            log_warn "Certificate expires within 30 days"
+        else
+            log_error "Certificate expired or expires within 7 days"
+            overall_status=1
+        fi
+    fi
+
+    # Check if it's a Let's Encrypt cert or self-signed
+    issuer=$(sudo openssl x509 -issuer -noout -in "$cert_path" 2>/dev/null | grep -o "O = [^,]*" | cut -d= -f2 | xargs)
+    if [[ "$issuer" == *"Let's Encrypt"* ]]; then
+        echo "  Type: Let's Encrypt"
+    else
+        echo "  Type: Self-signed"
+    fi
+else
+    log_error "SSL certificate not found"
+    overall_status=1
+fi
+
+echo
+
+# =============================================================================
+# Disk Usage
+# =============================================================================
+echo "Disk Usage:"
+
+# Get Docker volume info
+volume_name=$(get_volume_name "foundry_data")
+if docker volume inspect "$volume_name" &>/dev/null; then
+    # Get mount point and size
+    mountpoint=$(docker volume inspect "$volume_name" --format '{{.Mountpoint}}' 2>/dev/null)
+    if [ -n "$mountpoint" ] && [ -d "$mountpoint" ]; then
+        size=$(sudo du -sb "$mountpoint" 2>/dev/null | cut -f1)
+        if [ -n "$size" ]; then
+            echo "  Foundry data: $(format_bytes "$size")"
+        else
+            echo "  Foundry data: unable to determine size"
+        fi
+    else
+        echo "  Foundry data: volume exists (size unavailable)"
+    fi
+else
+    echo "  Foundry data: volume not created yet"
+fi
+
+# Show available disk space
+available=$(df -B1 . 2>/dev/null | tail -1 | awk '{print $4}')
+if [ -n "$available" ]; then
+    echo "  Available space: $(format_bytes "$available")"
+fi
+
+echo
+
+# =============================================================================
+# Backup Status
+# =============================================================================
+echo "Backups:"
+
+backup_dir="./backups"
+if [ -d "$backup_dir" ]; then
+    backup_count=$(find "$backup_dir" -name "foundry-backup-*.tar.gz" 2>/dev/null | wc -l)
+
+    if [ "$backup_count" -gt 0 ]; then
+        log_ok "$backup_count backup(s) found"
+
+        # Find latest backup
+        latest=$(find "$backup_dir" -name "foundry-backup-*.tar.gz" -type f 2>/dev/null | sort -r | head -1)
+        if [ -n "$latest" ]; then
+            latest_name=$(basename "$latest")
+            latest_size=$(stat -f%z "$latest" 2>/dev/null || stat -c%s "$latest" 2>/dev/null)
+            latest_mod=$(stat -f%m "$latest" 2>/dev/null || stat -c%Y "$latest" 2>/dev/null)
+
+            echo "  Latest: $latest_name"
+            if [ -n "$latest_size" ]; then
+                echo "  Size: $(format_bytes "$latest_size")"
+            fi
+
+            if [ -n "$latest_mod" ]; then
+                now=$(date +%s)
+                age=$((now - latest_mod))
+                echo "  Age: $(format_duration $age)"
+
+                # Warn if backup is old
+                if [ "$age" -gt 604800 ]; then  # 7 days
+                    log_warn "No backup in over 7 days"
+                fi
+            fi
+        fi
+    else
+        log_warn "No backups found"
+    fi
+else
+    log_info "No backups directory (run ./backup to create)"
+fi
+
+echo
+
+# =============================================================================
+# Summary
+# =============================================================================
+echo "========================================="
+if [ $overall_status -eq 0 ]; then
+    log_ok "All systems operational"
+
+    # Show access URL
+    if [ -f .env ]; then
+        hostname=$(parse_env_value "FOUNDRY_HOSTNAME")
+        if [ -n "$hostname" ]; then
+            echo
+            echo "Access Foundry at: https://$hostname"
+        fi
+    fi
+else
+    log_warn "Issues detected - see above for details"
+fi
+echo
+
+exit $overall_status

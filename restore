@@ -1,0 +1,330 @@
+#!/bin/bash
+set -e
+set -o pipefail
+
+# Source common functions
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
+
+# Configuration
+BACKUP_DIR="$SCRIPT_DIR/backups"
+
+# =============================================================================
+# Functions
+# =============================================================================
+
+show_usage() {
+    echo "Usage: $0 [backup-file]"
+    echo
+    echo "Arguments:"
+    echo "  backup-file  Name of backup to restore (e.g., foundry-backup-20240101_120000.tar.gz)"
+    echo "               If not specified, shows interactive selection"
+    echo
+    echo "Options:"
+    echo "  --list       List available backups"
+    echo "  --skip-env   Don't restore .env file (keep current configuration)"
+    echo "  --force      Skip confirmation prompts"
+    echo "  help         Show this help message"
+    echo
+}
+
+list_backups() {
+    if [ ! -d "$BACKUP_DIR" ]; then
+        return 1
+    fi
+
+    find "$BACKUP_DIR" -name "foundry-backup-*.tar.gz" -type f 2>/dev/null | sort -r
+}
+
+validate_backup() {
+    local backup_file=$1
+
+    if [ ! -f "$backup_file" ]; then
+        log_error "Backup file not found: $backup_file"
+        return 1
+    fi
+
+    # Check it's a valid tar.gz
+    if ! tar tzf "$backup_file" &>/dev/null; then
+        log_error "Invalid or corrupted backup file"
+        return 1
+    fi
+
+    # Check for required files
+    if ! tar tzf "$backup_file" | grep -q "data.tar.gz"; then
+        log_error "Backup missing data archive"
+        return 1
+    fi
+
+    return 0
+}
+
+show_backup_info() {
+    local backup_file=$1
+    local temp_dir
+    temp_dir=$(mktemp -d)
+
+    trap "rm -rf '$temp_dir'" RETURN
+
+    # Extract metadata
+    tar xzf "$backup_file" -C "$temp_dir" backup.info 2>/dev/null || true
+
+    if [ -f "$temp_dir/backup.info" ]; then
+        echo "Backup information:"
+        while IFS= read -r line; do
+            echo "  $line"
+        done < "$temp_dir/backup.info"
+    else
+        echo "  (No metadata available)"
+    fi
+}
+
+select_backup_interactive() {
+    echo "=== Available Backups ==="
+    echo
+
+    local backups
+    backups=$(list_backups)
+
+    if [ -z "$backups" ]; then
+        log_error "No backups found in $BACKUP_DIR"
+        echo "  Create a backup first with: ./backup"
+        exit 1
+    fi
+
+    # Convert to array
+    local backup_array=()
+    while IFS= read -r line; do
+        backup_array+=("$line")
+    done <<< "$backups"
+
+    local count=${#backup_array[@]}
+    echo "Select a backup to restore:"
+    echo
+
+    for i in "${!backup_array[@]}"; do
+        local name size mod_time
+        name=$(basename "${backup_array[$i]}")
+        size=$(stat -f%z "${backup_array[$i]}" 2>/dev/null || stat -c%s "${backup_array[$i]}" 2>/dev/null)
+        mod_time=$(stat -f%Sm -t "%Y-%m-%d %H:%M" "${backup_array[$i]}" 2>/dev/null || stat -c%y "${backup_array[$i]}" 2>/dev/null | cut -d. -f1)
+
+        printf "  %d) %-40s (%s, %s)\n" "$((i+1))" "$name" "$(format_bytes "$size")" "$mod_time"
+    done
+
+    echo
+    echo "  0) Cancel"
+    echo
+
+    local choice
+    while true; do
+        read -p "Enter choice [1-$count, 0 to cancel]: " choice
+
+        if [ "$choice" = "0" ]; then
+            echo "Restore cancelled."
+            exit 0
+        fi
+
+        if [[ "$choice" =~ ^[0-9]+$ ]] && [ "$choice" -ge 1 ] && [ "$choice" -le "$count" ]; then
+            echo "${backup_array[$((choice-1))]}"
+            return
+        fi
+
+        log_error "Invalid choice. Enter 1-$count or 0 to cancel."
+    done
+}
+
+restore_backup() {
+    local backup_file=$1
+    local skip_env=${2:-false}
+    local force=${3:-false}
+
+    echo "=== Restoring Foundry VTT Backup ==="
+    echo
+
+    # Resolve full path
+    if [[ "$backup_file" != /* ]]; then
+        if [ -f "$BACKUP_DIR/$backup_file" ]; then
+            backup_file="$BACKUP_DIR/$backup_file"
+        elif [ -f "$backup_file" ]; then
+            backup_file="$(pwd)/$backup_file"
+        fi
+    fi
+
+    # Validate backup
+    log_info "Validating backup..."
+    validate_backup "$backup_file" || exit 1
+    log_ok "Backup file is valid"
+    echo
+
+    # Show backup info
+    show_backup_info "$backup_file"
+    echo
+
+    # Check prerequisites
+    check_docker || exit 1
+    check_docker_daemon || exit 1
+
+    # Get volume name
+    volume_name=$(get_volume_name "foundry_data")
+
+    # Confirmation
+    if [ "$force" != true ]; then
+        echo "This will:"
+        echo "  - Stop Foundry containers"
+        echo "  - Replace ALL Foundry data with the backup"
+        if [ "$skip_env" != true ]; then
+            echo "  - Replace .env with backed up configuration"
+        fi
+        echo
+        log_warn "Current data will be OVERWRITTEN"
+        echo
+        read -p "Continue with restore? [y/N]: " confirm
+        if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+            echo "Restore cancelled."
+            exit 0
+        fi
+    fi
+
+    echo
+
+    # Create temp directory
+    temp_dir=$(mktemp -d)
+    trap "rm -rf '$temp_dir'" EXIT
+
+    # Extract backup
+    log_info "Extracting backup..."
+    tar xzf "$backup_file" -C "$temp_dir"
+
+    if [ ! -f "$temp_dir/data.tar.gz" ]; then
+        log_error "Backup is missing data archive"
+        exit 1
+    fi
+    log_ok "Backup extracted"
+
+    # Stop containers
+    log_info "Stopping Foundry..."
+    docker compose down 2>/dev/null || true
+
+    # Clear and restore volume
+    log_info "Restoring data volume..."
+
+    # Remove existing volume if it exists
+    if docker volume inspect "$volume_name" &>/dev/null; then
+        docker volume rm "$volume_name" 2>/dev/null || {
+            log_error "Could not remove existing volume. Make sure containers are stopped."
+            exit 1
+        }
+    fi
+
+    # Create new volume
+    docker volume create "$volume_name" >/dev/null
+
+    # Restore data to volume
+    docker run --rm \
+        -v "${volume_name}:/data" \
+        -v "${temp_dir}:/backup:ro" \
+        alpine:3.20 \
+        sh -c "tar xzf /backup/data.tar.gz -C /data"
+
+    log_ok "Data volume restored"
+
+    # Restore .env if requested
+    if [ "$skip_env" != true ] && [ -f "$temp_dir/env.backup" ]; then
+        log_info "Restoring configuration..."
+
+        # Backup current .env if it exists
+        if [ -f .env ]; then
+            cp .env ".env.pre-restore.$(date +%Y%m%d_%H%M%S)"
+            log_info "Current .env backed up"
+        fi
+
+        cp "$temp_dir/env.backup" .env
+        chmod 600 .env
+        log_ok "Configuration restored"
+    elif [ "$skip_env" = true ]; then
+        log_info "Skipping .env restore (keeping current configuration)"
+    fi
+
+    # Start containers
+    log_info "Starting Foundry..."
+    docker compose up -d
+
+    # Wait for startup
+    echo "Waiting for containers to start..."
+    sleep 5
+
+    echo
+    echo "=== Restore Complete ==="
+    echo
+
+    if is_foundry_running; then
+        log_ok "Foundry is running"
+
+        hostname=$(parse_env_value "FOUNDRY_HOSTNAME")
+        if [ -n "$hostname" ]; then
+            echo
+            echo "Access Foundry at: https://$hostname"
+        fi
+    else
+        log_warn "Foundry may still be starting"
+        echo "  Check status with: ./status"
+        echo "  View logs with: ./logs"
+    fi
+
+    echo
+}
+
+# =============================================================================
+# Main
+# =============================================================================
+
+# Parse arguments
+backup_file=""
+skip_env=false
+force=false
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --list)
+            # List backups and exit
+            backups=$(list_backups)
+            if [ -z "$backups" ]; then
+                log_info "No backups found in $BACKUP_DIR"
+            else
+                echo "Available backups:"
+                while IFS= read -r backup; do
+                    echo "  $(basename "$backup")"
+                done <<< "$backups"
+            fi
+            exit 0
+            ;;
+        --skip-env)
+            skip_env=true
+            shift
+            ;;
+        --force)
+            force=true
+            shift
+            ;;
+        help|--help|-h)
+            show_usage
+            exit 0
+            ;;
+        -*)
+            log_error "Unknown option: $1"
+            show_usage
+            exit 1
+            ;;
+        *)
+            backup_file="$1"
+            shift
+            ;;
+    esac
+done
+
+# If no backup specified, interactive selection
+if [ -z "$backup_file" ]; then
+    backup_file=$(select_backup_interactive)
+fi
+
+restore_backup "$backup_file" "$skip_env" "$force"

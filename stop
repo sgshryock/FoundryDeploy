@@ -1,16 +1,16 @@
 #!/bin/bash
 set -e
+set -o pipefail
+
+# Source common functions
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
 
 echo "=== Stopping Foundry VTT ==="
 echo
 
 # Check for docker compose
-if ! docker compose version &> /dev/null; then
-    if ! command -v docker-compose &> /dev/null; then
-        echo "[ERROR] Docker Compose is not installed"
-        exit 1
-    fi
-fi
+check_docker_compose || exit 1
 
 # Check if containers are running
 if ! docker compose ps --quiet 2>/dev/null | grep -q .; then

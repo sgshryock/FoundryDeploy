@@ -1,22 +1,16 @@
 #!/bin/bash
 set -e
+set -o pipefail
+
+# Source common functions
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
 
 echo "=== Foundry VTT Logs ==="
 
-# Check for docker compose
-if ! docker compose version &> /dev/null; then
-    if ! command -v docker-compose &> /dev/null; then
-        echo "[ERROR] Docker Compose is not installed"
-        exit 1
-    fi
-fi
-
-# Check if docker daemon is running
-if ! docker info &> /dev/null; then
-    echo "[ERROR] Docker daemon is not running"
-    echo "  Start it with: sudo systemctl start docker"
-    exit 1
-fi
+# Check prerequisites
+check_docker_compose || exit 1
+check_docker_daemon || exit 1
 
 echo "Press Ctrl+C to exit"
 echo

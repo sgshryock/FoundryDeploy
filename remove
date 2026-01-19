@@ -1,5 +1,10 @@
 #!/bin/bash
 set -e
+set -o pipefail
+
+# Source common functions
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+source "$SCRIPT_DIR/lib/common.sh"
 
 echo "=== Remove Foundry VTT Installation ==="
 echo

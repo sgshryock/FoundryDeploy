@@ -192,12 +192,16 @@ detect_environment() {
     # Check for .env file override
     if [ -f .env ]; then
         local file_env
-        file_env=$(grep -E "^DEPLOY_ENVIRONMENT=" .env 2>/dev/null | cut -d'=' -f2- | tr -d ' ')
-        [ -n "$file_env" ] && [ "$file_env" != "auto" ] && env_override="$file_env"
+        file_env=$(grep -E "^DEPLOY_ENVIRONMENT=" .env 2>/dev/null | cut -d'=' -f2- | tr -d ' ') || true
+        if [ -n "$file_env" ] && [ "$file_env" != "auto" ]; then
+            env_override="$file_env"
+        fi
 
         local file_service
-        file_service=$(grep -E "^DEPLOY_SERVICE_MANAGER=" .env 2>/dev/null | cut -d'=' -f2- | tr -d ' ')
-        [ -n "$file_service" ] && [ "$file_service" != "auto" ] && service_override="$file_service"
+        file_service=$(grep -E "^DEPLOY_SERVICE_MANAGER=" .env 2>/dev/null | cut -d'=' -f2- | tr -d ' ') || true
+        if [ -n "$file_service" ] && [ "$file_service" != "auto" ]; then
+            service_override="$file_service"
+        fi
     fi
 
     # Detect environment type

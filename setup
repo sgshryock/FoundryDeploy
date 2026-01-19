@@ -4,6 +4,134 @@ set -o pipefail
 
 REPO_URL="https://github.com/sgshryock/FoundryDeploy.git"
 
+# =============================================================================
+# Early Environment Detection (before repo clone)
+# =============================================================================
+
+# Simple LXC detection (doesn't require lib/environment.sh)
+_is_lxc_container() {
+    # Check /proc/1/environ for container=lxc
+    if [ -f /proc/1/environ ] && grep -qa 'container=lxc' /proc/1/environ 2>/dev/null; then
+        return 0
+    fi
+    # Check cgroup for lxc
+    if [ -f /proc/1/cgroup ] && grep -qa 'lxc' /proc/1/cgroup 2>/dev/null; then
+        return 0
+    fi
+    # Check systemd-detect-virt
+    if command -v systemd-detect-virt &>/dev/null; then
+        local virt
+        virt=$(systemd-detect-virt 2>/dev/null)
+        if [ "$virt" = "lxc" ] || [ "$virt" = "lxc-libvirt" ]; then
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# Fix AppArmor issue in LXC containers
+_fix_lxc_apparmor() {
+    echo
+    echo "[INFO] Checking AppArmor status..."
+
+    if ! command -v apparmor_status &>/dev/null && ! dpkg -l apparmor &>/dev/null 2>&1; then
+        echo "[OK] AppArmor not installed (no fix needed)"
+        return 0
+    fi
+
+    echo "[INFO] AppArmor is installed - removing to fix Docker compatibility..."
+
+    # Stop and disable AppArmor
+    if systemctl is-active apparmor &>/dev/null; then
+        sudo systemctl stop apparmor
+    fi
+    if systemctl is-enabled apparmor &>/dev/null 2>&1; then
+        sudo systemctl disable apparmor
+    fi
+
+    # Remove AppArmor
+    sudo apt remove -y apparmor 2>/dev/null || sudo dnf remove -y apparmor 2>/dev/null || true
+
+    echo "[OK] AppArmor removed"
+    return 0
+}
+
+# Install dependencies for LXC container
+_install_lxc_dependencies() {
+    echo
+    echo "=== Installing Dependencies for Proxmox LXC ==="
+    echo
+
+    # Detect package manager
+    if command -v apt &>/dev/null; then
+        PKG_MANAGER="apt"
+        PKG_UPDATE="sudo apt update"
+        PKG_INSTALL="sudo apt install -y"
+    elif command -v dnf &>/dev/null; then
+        PKG_MANAGER="dnf"
+        PKG_UPDATE="sudo dnf check-update || true"
+        PKG_INSTALL="sudo dnf install -y"
+    elif command -v yum &>/dev/null; then
+        PKG_MANAGER="yum"
+        PKG_UPDATE="sudo yum check-update || true"
+        PKG_INSTALL="sudo yum install -y"
+    else
+        echo "[ERROR] Could not detect package manager (apt/dnf/yum)"
+        return 1
+    fi
+
+    echo "[INFO] Using package manager: $PKG_MANAGER"
+    echo "[INFO] Updating package lists..."
+    $PKG_UPDATE
+
+    # Install basic dependencies
+    echo "[INFO] Installing git, nginx, openssl, curl..."
+    $PKG_INSTALL git nginx openssl curl
+
+    # Install Docker if not present
+    if ! command -v docker &>/dev/null; then
+        echo
+        echo "[INFO] Installing Docker..."
+        curl -fsSL https://get.docker.com | sh
+
+        # Add current user to docker group if not root
+        if [ "$(id -u)" != "0" ]; then
+            sudo usermod -aG docker "$USER"
+            echo "[INFO] Added $USER to docker group"
+        fi
+    else
+        echo "[OK] Docker already installed"
+    fi
+
+    # Fix AppArmor (critical for Docker in LXC)
+    _fix_lxc_apparmor
+
+    # Restart Docker after AppArmor removal
+    echo "[INFO] Restarting Docker..."
+    sudo systemctl restart docker 2>/dev/null || sudo service docker restart 2>/dev/null || true
+    sleep 2
+
+    # Verify Docker works
+    echo "[INFO] Verifying Docker..."
+    if docker run --rm hello-world &>/dev/null; then
+        echo "[OK] Docker is working correctly"
+    else
+        echo "[ERROR] Docker test failed"
+        echo "       Make sure nesting is enabled on the Proxmox host:"
+        echo "       sudo bash -c 'echo \"features: nesting=1\" >> /etc/pve/lxc/<CT_ID>.conf'"
+        echo "       Then restart the container and run setup again."
+        return 1
+    fi
+
+    # Enable and start nginx
+    sudo systemctl enable nginx 2>/dev/null || true
+    sudo systemctl start nginx 2>/dev/null || sudo nginx 2>/dev/null || true
+
+    echo
+    echo "[OK] All dependencies installed successfully"
+    return 0
+}
+
 # Source environment detection and common functions (after clone)
 _source_environment() {
     local script_dir
@@ -57,6 +185,74 @@ update_setup_script() {
 }
 
 echo "=== Foundry VTT Deployment Setup ==="
+echo
+
+# =============================================================================
+# Environment Selection
+# =============================================================================
+
+# Check if we auto-detected LXC
+LXC_DETECTED=false
+if _is_lxc_container; then
+    LXC_DETECTED=true
+fi
+
+# Offer environment selection
+echo "Select your deployment environment:"
+echo
+echo "  1) Physical Linux Server / VM (default)"
+echo "  2) Proxmox LXC Container"
+echo "  3) AWS EC2 Instance"
+echo
+
+if [ "$LXC_DETECTED" = true ]; then
+    echo "[Auto-detected: Proxmox LXC Container]"
+    read -p "Environment [1-3, default=2]: " env_choice
+    env_choice=${env_choice:-2}
+else
+    read -p "Environment [1-3, default=1]: " env_choice
+    env_choice=${env_choice:-1}
+fi
+
+echo
+
+case "$env_choice" in
+    2)
+        echo "[INFO] Proxmox LXC Container selected"
+        echo
+        echo "This will automatically:"
+        echo "  - Install required dependencies (git, nginx, openssl, curl)"
+        echo "  - Install Docker (if not present)"
+        echo "  - Fix AppArmor compatibility issues"
+        echo
+        echo "Prerequisites (must be done on Proxmox HOST first):"
+        echo "  - Container must be PRIVILEGED"
+        echo "  - Nesting must be enabled:"
+        echo "    sudo bash -c 'echo \"features: nesting=1\" >> /etc/pve/lxc/<CT_ID>.conf'"
+        echo
+        read -p "Continue with automatic LXC setup? [Y/n]: " lxc_auto
+        lxc_auto=${lxc_auto:-Y}
+
+        if [[ "$lxc_auto" =~ ^[Yy]$ ]]; then
+            if ! _install_lxc_dependencies; then
+                echo "[ERROR] LXC dependency installation failed"
+                exit 1
+            fi
+        else
+            echo "[INFO] Skipping automatic setup - checking dependencies manually..."
+        fi
+        ;;
+    3)
+        echo "[INFO] AWS EC2 selected"
+        echo "       Continuing with standard setup..."
+        echo "       See docs/AWS_EC2.md for AWS-specific recommendations"
+        ;;
+    *)
+        echo "[INFO] Physical/VM selected"
+        echo "       Continuing with standard setup..."
+        ;;
+esac
+
 echo
 
 # Check for required commands

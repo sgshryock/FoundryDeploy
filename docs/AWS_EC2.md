@@ -261,21 +261,206 @@ Or manually:
 
 ## Cost Optimization
 
-### Reserved Instances
+Most game groups only play a few hours per week. Running your instance only during game sessions can reduce costs by **75-80%**.
 
-For long-running servers, consider Reserved Instances:
-- 1-year: ~30% savings
-- 3-year: ~50% savings
+### Cost Comparison
 
-### Spot Instances
+| Usage Pattern | Hours/Month | EC2 (t3.small) | Storage (50GB) | Total |
+|---------------|-------------|----------------|----------------|-------|
+| 24/7 (always on) | 730 | ~$15.00 | ~$4.00 | **~$19/mo** |
+| Weekly sessions (5 hrs) | 20 | ~$0.42 | ~$4.00 | **~$4.50/mo** |
+| Twice weekly (10 hrs) | 40 | ~$0.84 | ~$4.00 | **~$5/mo** |
 
-For development/testing (not recommended for production):
+**Note:** Storage (EBS) is charged whether the instance is running or not. The savings come from EC2 compute hours.
+
+---
+
+### Start/Stop Scripts
+
+Use these scripts from your local machine to start and stop your Foundry server before and after game sessions.
+
+#### Download Scripts
+
+```bash
+# Download all three scripts
+curl -fsSL https://raw.githubusercontent.com/sgshryock/FoundryDeploy/main/aws/foundry-start.sh -o foundry-start.sh
+curl -fsSL https://raw.githubusercontent.com/sgshryock/FoundryDeploy/main/aws/foundry-stop.sh -o foundry-stop.sh
+curl -fsSL https://raw.githubusercontent.com/sgshryock/FoundryDeploy/main/aws/foundry-status.sh -o foundry-status.sh
+chmod +x foundry-*.sh
+```
+
+#### Prerequisites
+
+1. Install [AWS CLI](https://aws.amazon.com/cli/)
+2. Configure credentials: `aws configure`
+3. Note your instance ID (starts with `i-`)
+4. Set your instance ID:
+   ```bash
+   # Option 1: Environment variable (add to ~/.bashrc or ~/.zshrc)
+   export FOUNDRY_INSTANCE_ID=i-0123456789abcdef0
+   export AWS_REGION=us-east-1
+
+   # Option 2: Edit the scripts directly
+   nano foundry-start.sh
+   ```
+
+#### foundry-start.sh
+
+```bash
+#!/bin/bash
+# Start Foundry EC2 instance and show connection info
+
+INSTANCE_ID="i-xxxxxxxxxxxxxxxxx"  # Replace with your instance ID
+REGION="us-east-1"                  # Replace with your region
+
+echo "Starting Foundry server..."
+aws ec2 start-instances --instance-ids "$INSTANCE_ID" --region "$REGION" > /dev/null
+
+echo "Waiting for instance to start..."
+aws ec2 wait instance-running --instance-ids "$INSTANCE_ID" --region "$REGION"
+
+# Get the public IP (changes on each start unless using Elastic IP)
+PUBLIC_IP=$(aws ec2 describe-instances \
+  --instance-ids "$INSTANCE_ID" \
+  --region "$REGION" \
+  --query 'Reservations[0].Instances[0].PublicIpAddress' \
+  --output text)
+
+echo ""
+echo "Foundry server is starting!"
+echo "Public IP: $PUBLIC_IP"
+echo "URL: https://$PUBLIC_IP"
+echo ""
+echo "Note: Foundry takes 1-2 minutes to fully start after the instance is running."
+echo "SSH: ssh -i ~/.ssh/your-key.pem ubuntu@$PUBLIC_IP"
+```
+
+#### foundry-stop.sh
+
+```bash
+#!/bin/bash
+# Stop Foundry EC2 instance
+
+INSTANCE_ID="i-xxxxxxxxxxxxxxxxx"  # Replace with your instance ID
+REGION="us-east-1"                  # Replace with your region
+
+echo "Stopping Foundry server..."
+aws ec2 stop-instances --instance-ids "$INSTANCE_ID" --region "$REGION" > /dev/null
+
+echo "Waiting for instance to stop..."
+aws ec2 wait instance-stopped --instance-ids "$INSTANCE_ID" --region "$REGION"
+
+echo "Foundry server stopped."
+echo "You will not be charged for EC2 compute while stopped."
+echo "(EBS storage charges still apply)"
+```
+
+#### foundry-status.sh
+
+```bash
+#!/bin/bash
+# Check Foundry EC2 instance status
+
+INSTANCE_ID="i-xxxxxxxxxxxxxxxxx"  # Replace with your instance ID
+REGION="us-east-1"                  # Replace with your region
+
+STATUS=$(aws ec2 describe-instances \
+  --instance-ids "$INSTANCE_ID" \
+  --region "$REGION" \
+  --query 'Reservations[0].Instances[0].State.Name' \
+  --output text)
+
+echo "Instance status: $STATUS"
+
+if [ "$STATUS" = "running" ]; then
+  PUBLIC_IP=$(aws ec2 describe-instances \
+    --instance-ids "$INSTANCE_ID" \
+    --region "$REGION" \
+    --query 'Reservations[0].Instances[0].PublicIpAddress' \
+    --output text)
+  echo "Public IP: $PUBLIC_IP"
+  echo "URL: https://$PUBLIC_IP"
+fi
+```
+
+#### Usage
+
+```bash
+./foundry-start.sh   # Before game session - starts instance and shows IP
+./foundry-status.sh  # Check if running and get current IP
+./foundry-stop.sh    # After game session - stops instance to save money
+```
+
+---
+
+### Elastic IP Consideration
+
+By default, EC2 instances get a new public IP each time they start. This means:
+- Players need the new IP each session
+- DNS records need updating
+
+**Options:**
+
+1. **Share IP each session** - Free, minor inconvenience
+2. **Use Elastic IP** - Static IP, but costs ~$3.65/month when instance is stopped
+3. **Use a domain with short TTL** - Update DNS automatically via script
+
+For most home games, sharing the IP each session is fine.
+
+---
+
+### Automated Scheduling (Optional)
+
+For predictable game schedules, automate start/stop:
+
+**AWS Instance Scheduler:**
+- AWS's official solution
+- Deploy via CloudFormation
+- Supports complex schedules
+
+**EventBridge + Lambda:**
+```bash
+# Example: Start every Saturday at 6 PM, stop at midnight
+# Create Lambda functions for start/stop, trigger with EventBridge rules
+```
+
+**Simple cron (from always-on machine):**
+```bash
+# Start Saturday 5:30 PM (30 min before game)
+30 17 * * 6 /path/to/foundry-start.sh
+
+# Stop Saturday 11:30 PM (after game)
+30 23 * * 6 /path/to/foundry-stop.sh
+```
+
+---
+
+### Other Cost Reduction Options
+
+#### Graviton Instances (ARM)
+
+t4g instances are ~20% cheaper than t3:
+
+| Instance | vCPUs | RAM | Monthly (24/7) |
+|----------|-------|-----|----------------|
+| t3.small | 2 | 2 GB | ~$15 |
+| **t4g.small** | 2 | 2 GB | ~$12 |
+
+The felddy/foundryvtt Docker image supports ARM. To use Graviton:
+1. Launch a t4g instance instead of t3
+2. Setup works the same way
+
+#### Reserved Instances
+
+For long-running servers (24/7), consider Reserved Instances:
+- 1-year commitment: ~30% savings
+- 3-year commitment: ~50% savings
+
+#### Spot Instances
+
+For development/testing only (not recommended for game sessions):
 - Up to 90% savings
-- May be interrupted
-
-### Auto-Stop
-
-Create a Lambda function or use Instance Scheduler to stop the instance when not in use.
+- May be interrupted with 2-minute warning
 
 ---
 

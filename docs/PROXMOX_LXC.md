@@ -1,14 +1,37 @@
 # Running FoundryDeploy in Proxmox LXC Containers
 
-This guide explains how to run FoundryDeploy inside a Proxmox LXC container. While VMs are the recommended approach, LXC containers can work with proper configuration.
+This guide explains how to run FoundryDeploy inside a Proxmox LXC container. While VMs are the recommended approach, LXC containers work well with the automatic setup.
 
-## Quick Start
+## Quick Start (Automatic Setup)
 
-1. Create a **privileged** Debian 12 or Ubuntu 22.04 LXC container
-2. Enable **nesting** feature (via SSH if not using root@pam)
-3. Configure AppArmor (host config + remove inside container)
-4. Install Docker inside the container
-5. Run FoundryDeploy setup
+**On Proxmox Host:**
+```bash
+# 1. Create a privileged Ubuntu/Debian LXC container via web UI or CLI
+
+# 2. Enable nesting (replace 200 with your CT ID)
+sudo bash -c 'echo "features: nesting=1" >> /etc/pve/lxc/200.conf'
+
+# 3. Start the container
+pct start 200
+```
+
+**Inside the Container:**
+```bash
+# 4. Install curl (only dependency needed)
+apt update && apt install -y curl
+
+# 5. Run setup - it handles everything else automatically
+curl -fsSL https://raw.githubusercontent.com/sgshryock/FoundryDeploy/main/setup -o setup
+chmod +x setup
+./setup
+```
+
+The setup script will:
+- Auto-detect Proxmox LXC environment
+- Install Docker, nginx, and other dependencies
+- Remove AppArmor (required for Docker in LXC)
+- Configure and start Foundry
+- Display the container's IP address for access
 
 ## Container Requirements
 
@@ -118,41 +141,37 @@ Or create a custom AppArmor profile that allows Docker operations.
 
 ## Container Setup
 
-### Start and Enter Container
+### Automatic Setup (Recommended)
+
+The setup script handles everything automatically. Just run:
 
 ```bash
-# Start the container
+# Start and enter the container
 pct start 200
-
-# Enter the container
 pct enter 200
+
+# Install curl and run setup
+apt update && apt install -y curl
+curl -fsSL https://raw.githubusercontent.com/sgshryock/FoundryDeploy/main/setup -o setup
+chmod +x setup
+./setup
 ```
 
-### Install Docker
+When prompted, select option 2 (Proxmox LXC Container) and let it install dependencies automatically.
 
-Inside the container:
+### Manual Setup (Advanced)
+
+If you prefer manual control or automatic setup fails:
 
 ```bash
 # Update packages
 apt update && apt upgrade -y
 
 # Install prerequisites
-apt install -y ca-certificates curl gnupg
+apt install -y ca-certificates curl gnupg git nginx openssl
 
-# Add Docker's official GPG key
-install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-chmod a+r /etc/apt/keyrings/docker.gpg
-
-# Add Docker repository (Debian)
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-# For Ubuntu, use:
-# echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-# Install Docker
-apt update
-apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+# Install Docker via convenience script
+curl -fsSL https://get.docker.com | sh
 
 # Fix AppArmor (required for Docker in LXC)
 systemctl stop apparmor
@@ -164,20 +183,9 @@ systemctl restart docker
 docker run --rm hello-world
 ```
 
-### Install Other Dependencies
-
-```bash
-apt install -y git nginx openssl
-```
-
 ### Run FoundryDeploy Setup
 
 ```bash
-# Create a user (optional but recommended)
-adduser foundry
-usermod -aG docker foundry
-su - foundry
-
 # Download and run setup
 curl -fsSL https://raw.githubusercontent.com/sgshryock/FoundryDeploy/main/setup -o setup
 chmod +x setup
@@ -276,6 +284,34 @@ If it shows `unprivileged: 1`, you need to recreate as a privileged container.
 Some LXC containers don't run systemd by default. FoundryDeploy will automatically detect this and use direct service management.
 
 If you see warnings about systemd, services will be managed directly (nginx will be started with `nginx` command instead of `systemctl`).
+
+### Rate Limit Errors (429)
+
+**Symptom:** `Unexpected response 429: Too Many Requests` or `Failed to fetch release URL`
+
+The Foundry container reinstalls on each startup and validates the download URL with Foundry's API. Too many restart attempts can trigger rate limiting.
+
+**Solution 1: Wait**
+```bash
+# Stop the container to stop retry attempts
+docker compose down
+
+# Wait 30-60 minutes for rate limit to reset
+# Then start again
+docker compose up -d
+```
+
+**Solution 2: Use direct download URL**
+1. Log into https://foundryvtt.com
+2. Go to Purchased Licenses → Download
+3. Copy the timed download URL
+4. Add to .env:
+```bash
+echo 'FOUNDRY_RELEASE_URL=https://your-timed-url-here' >> .env
+docker compose up -d
+```
+
+**Prevention:** The setup script caches the Foundry download in `/data/container_cache`. When using `./remove`, select "Keep everything" to preserve the cache and avoid re-downloading.
 
 ---
 

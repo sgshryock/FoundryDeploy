@@ -56,10 +56,40 @@ _fix_lxc_apparmor() {
     return 0
 }
 
+# Check if LXC dependencies are already installed
+_check_lxc_dependencies() {
+    local missing=0
+    command -v git &>/dev/null || missing=1
+    command -v docker &>/dev/null || missing=1
+    command -v nginx &>/dev/null || missing=1
+    command -v openssl &>/dev/null || missing=1
+
+    # Check if Docker is working (not just installed)
+    if command -v docker &>/dev/null; then
+        docker info &>/dev/null || missing=1
+    fi
+
+    return $missing
+}
+
 # Install dependencies for LXC container
 _install_lxc_dependencies() {
     echo
-    echo "=== Installing Dependencies for Proxmox LXC ==="
+    echo "=== Checking LXC Dependencies ==="
+    echo
+
+    # Check if everything is already set up
+    if _check_lxc_dependencies; then
+        echo "[OK] All dependencies already installed and working"
+        echo
+        echo "Skipping installation. If you're having issues, you can:"
+        echo "  - Run 'docker info' to check Docker status"
+        echo "  - Check AppArmor with 'dpkg -l apparmor'"
+        echo
+        return 0
+    fi
+
+    echo "[INFO] Some dependencies need to be installed..."
     echo
 
     # Detect package manager
@@ -84,9 +114,19 @@ _install_lxc_dependencies() {
     echo "[INFO] Updating package lists..."
     $PKG_UPDATE
 
-    # Install basic dependencies
-    echo "[INFO] Installing git, nginx, openssl, curl..."
-    $PKG_INSTALL git nginx openssl curl
+    # Install basic dependencies only if missing
+    local pkgs_to_install=""
+    command -v git &>/dev/null || pkgs_to_install="$pkgs_to_install git"
+    command -v nginx &>/dev/null || pkgs_to_install="$pkgs_to_install nginx"
+    command -v openssl &>/dev/null || pkgs_to_install="$pkgs_to_install openssl"
+    command -v curl &>/dev/null || pkgs_to_install="$pkgs_to_install curl"
+
+    if [ -n "$pkgs_to_install" ]; then
+        echo "[INFO] Installing:$pkgs_to_install"
+        $PKG_INSTALL $pkgs_to_install
+    else
+        echo "[OK] Basic packages already installed"
+    fi
 
     # Install Docker if not present
     if ! command -v docker &>/dev/null; then
@@ -99,17 +139,26 @@ _install_lxc_dependencies() {
             sudo usermod -aG docker "$USER"
             echo "[INFO] Added $USER to docker group"
         fi
+
+        # New Docker install - need to fix AppArmor and start
+        _fix_lxc_apparmor
+
+        echo "[INFO] Starting Docker..."
+        sudo systemctl restart docker 2>/dev/null || sudo service docker restart 2>/dev/null || true
+        sleep 2
     else
         echo "[OK] Docker already installed"
+
+        # Check if Docker is working
+        if ! docker info &>/dev/null; then
+            echo "[WARN] Docker installed but not working - attempting fix..."
+            _fix_lxc_apparmor
+
+            echo "[INFO] Restarting Docker..."
+            sudo systemctl restart docker 2>/dev/null || sudo service docker restart 2>/dev/null || true
+            sleep 2
+        fi
     fi
-
-    # Fix AppArmor (critical for Docker in LXC)
-    _fix_lxc_apparmor
-
-    # Restart Docker after AppArmor removal
-    echo "[INFO] Restarting Docker..."
-    sudo systemctl restart docker 2>/dev/null || sudo service docker restart 2>/dev/null || true
-    sleep 2
 
     # Verify Docker works
     echo "[INFO] Verifying Docker..."

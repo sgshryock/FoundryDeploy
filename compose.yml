@@ -1,9 +1,8 @@
 services:
   foundry-init:
     image: alpine:3.20
-    # felddy/foundryvtt runs as UID 421 internally (the 'foundry' user)
-    # The FOUNDRY_UID/GID env vars are deprecated and ignored by the container
-    command: ["sh", "-c", "mkdir -p /data/container_cache && chown -R 421:421 /data && chmod -R 755 /data"]
+    # felddy/foundryvtt runs as UID 1000:1000 by default
+    command: ["sh", "-c", "mkdir -p /data/container_cache && chown -R 1000:1000 /data && chmod -R 755 /data"]
     volumes:
       - foundry_data:/data
     restart: "no"

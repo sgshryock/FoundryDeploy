@@ -64,7 +64,7 @@ show_backup_info() {
     local temp_dir
     temp_dir=$(mktemp -d)
 
-    trap "rm -rf '$temp_dir'" RETURN
+    trap 'rm -rf "$temp_dir"' RETURN
 
     # Extract metadata
     tar xzf "$backup_file" -C "$temp_dir" backup.info 2>/dev/null || true
@@ -117,7 +117,7 @@ select_backup_interactive() {
 
     local choice
     while true; do
-        read -p "Enter choice [1-$count, 0 to cancel]: " choice
+        read -rp "Enter choice [1-$count, 0 to cancel]: " choice
 
         if [ "$choice" = "0" ]; then
             echo "Restore cancelled."
@@ -178,7 +178,7 @@ restore_backup() {
         echo
         log_warn "Current data will be OVERWRITTEN"
         echo
-        read -p "Continue with restore? [y/N]: " confirm
+        read -rp "Continue with restore? [y/N]: " confirm
         if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
             echo "Restore cancelled."
             exit 0
@@ -189,7 +189,7 @@ restore_backup() {
 
     # Create temp directory
     temp_dir=$(mktemp -d)
-    trap "rm -rf '$temp_dir'" EXIT
+    trap 'rm -rf "$temp_dir"' EXIT
 
     # Extract backup
     log_info "Extracting backup..."

@@ -29,7 +29,7 @@ echo "  - Foundry VTT software (so you don't have to redownload it)"
 echo "  - All your worlds, modules, systems, and assets"
 echo "  - Configuration and settings"
 echo
-read -p "Keep everything? [Y/n]: " keep_data
+read -rp "Keep everything? [Y/n]: " keep_data
 keep_data=${keep_data:-Y}
 
 if [[ "$keep_data" =~ ^[Yy]$ ]]; then
@@ -45,7 +45,7 @@ else
     echo "        - ALL configuration and settings (in Foundry)"
     echo "        - Settings file (.env with credentials)"
     echo
-    read -p "Are you absolutely sure? Type 'DELETE' to confirm: " confirm
+    read -rp "Are you absolutely sure? Type 'DELETE' to confirm: " confirm
     if [ "$confirm" != "DELETE" ]; then
         echo "Removal cancelled."
         exit 0
@@ -82,7 +82,7 @@ echo "nginx configuration includes:"
 echo "  - Reverse proxy configuration (/etc/nginx/sites-available/foundry)"
 echo "  - SSL certificates (/etc/nginx/certs/foundry.crt and foundry.key)"
 echo
-read -p "Remove nginx configuration and SSL certificates? [Y/n]: " remove_nginx
+read -rp "Remove nginx configuration and SSL certificates? [Y/n]: " remove_nginx
 remove_nginx=${remove_nginx:-Y}
 
 if [[ "$remove_nginx" =~ ^[Yy]$ ]]; then

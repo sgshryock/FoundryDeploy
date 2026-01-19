@@ -123,6 +123,7 @@ _install_lxc_dependencies() {
 
     if [ -n "$pkgs_to_install" ]; then
         echo "[INFO] Installing:$pkgs_to_install"
+        # shellcheck disable=SC2086  # Intentional word splitting for package list
         $PKG_INSTALL $pkgs_to_install
     else
         echo "[OK] Basic packages already installed"
@@ -256,10 +257,10 @@ echo
 
 if [ "$LXC_DETECTED" = true ]; then
     echo "[Auto-detected: Proxmox LXC Container]"
-    read -p "Environment [1-3, default=2]: " env_choice
+    read -rp "Environment [1-3, default=2]: " env_choice
     env_choice=${env_choice:-2}
 else
-    read -p "Environment [1-3, default=1]: " env_choice
+    read -rp "Environment [1-3, default=1]: " env_choice
     env_choice=${env_choice:-1}
 fi
 
@@ -279,7 +280,7 @@ case "$env_choice" in
         echo "  - Nesting must be enabled:"
         echo "    sudo bash -c 'echo \"features: nesting=1\" >> /etc/pve/lxc/<CT_ID>.conf'"
         echo
-        read -p "Continue with automatic LXC setup? [Y/n]: " lxc_auto
+        read -rp "Continue with automatic LXC setup? [Y/n]: " lxc_auto
         lxc_auto=${lxc_auto:-Y}
 
         if [[ "$lxc_auto" =~ ^[Yy]$ ]]; then
@@ -379,15 +380,15 @@ if [ -f "compose.yml" ] && [ -f "setup" ]; then
     echo "Checking for updates..."
     git fetch origin main 2>/dev/null || true
 
-    if git rev-parse @{u} &>/dev/null; then
+    if git rev-parse '@{u}' &>/dev/null; then
         LOCAL=$(git rev-parse @)
-        REMOTE=$(git rev-parse @{u})
+        REMOTE=$(git rev-parse '@{u}')
 
         if [ "$LOCAL" != "$REMOTE" ]; then
             if [ -f ".env" ]; then
                 # Previous setup exists - prompt user
                 echo "[INFO] Updates available"
-                read -p "Pull latest updates? [Y/n]: " pull_updates
+                read -rp "Pull latest updates? [Y/n]: " pull_updates
                 pull_updates=${pull_updates:-Y}
 
                 if [[ "$pull_updates" =~ ^[Yy]$ ]]; then
@@ -433,15 +434,15 @@ elif [ "$INSTALL_DIR" != "." ] && [ -d "$INSTALL_DIR" ]; then
                 echo "Checking for updates..."
                 git fetch origin main 2>/dev/null || true
 
-                if git rev-parse @{u} &>/dev/null; then
+                if git rev-parse '@{u}' &>/dev/null; then
                     LOCAL=$(git rev-parse @)
-                    REMOTE=$(git rev-parse @{u})
+                    REMOTE=$(git rev-parse '@{u}')
 
                     if [ "$LOCAL" != "$REMOTE" ]; then
                         if [ -f ".env" ]; then
                             # Previous setup exists - prompt user
                             echo "[INFO] Updates available"
-                            read -p "Pull latest updates? [Y/n]: " pull_updates
+                            read -rp "Pull latest updates? [Y/n]: " pull_updates
                             pull_updates=${pull_updates:-Y}
 
                             if [[ "$pull_updates" =~ ^[Yy]$ ]]; then
@@ -643,7 +644,7 @@ if [ -f .env ]; then
     echo "  2) Reconfigure from scratch (current file will be backed up)"
     echo "  3) Abort setup"
     echo
-    read -p "Choose [1/2/3] (default=1): " config_choice
+    read -rp "Choose [1/2/3] (default=1): " config_choice
     config_choice=${config_choice:-1}  # Default to option 1
 
     case $config_choice in
@@ -668,7 +669,7 @@ if [ -f .env ]; then
                 echo "  Current system hostname: $system_hostname"
                 echo "  Configured hostname in .env: $foundry_hostname"
                 echo
-                read -p "Update hostname to match system ($system_hostname)? [Y/n]: " update_hostname
+                read -rp "Update hostname to match system ($system_hostname)? [Y/n]: " update_hostname
                 update_hostname=${update_hostname:-Y}
 
                 if [[ "$update_hostname" =~ ^[Yy]$ ]]; then
@@ -708,9 +709,11 @@ if [ -f .env ]; then
                 rm -f .env.bak
             else
                 # Add SYSTEM_HOSTNAME if it doesn't exist
-                echo "" >> .env
-                echo "# System hostname for Docker container (prevents license re-acknowledgement)" >> .env
-                echo "SYSTEM_HOSTNAME=$system_hostname" >> .env
+                {
+                    echo ""
+                    echo "# System hostname for Docker container (prevents license re-acknowledgement)"
+                    echo "SYSTEM_HOSTNAME=$system_hostname"
+                } >> .env
             fi
             echo "[OK] System hostname set to: $system_hostname"
 
@@ -746,19 +749,19 @@ if [ "$skip_config" = false ]; then
     echo
 
     while true; do
-        read -p "Foundry Username: " foundry_username
+        read -rp "Foundry Username: " foundry_username
         validate_non_empty "$foundry_username" "Username" && break
     done
 
     while true; do
-        read -sp "Foundry Password: " foundry_password
+        read -rsp "Foundry Password: " foundry_password
         echo
         validate_non_empty "$foundry_password" "Password" && break
     done
 
     echo
     while true; do
-        read -p "Foundry Admin Key (password for the web UI): " foundry_admin_key
+        read -rp "Foundry Admin Key (password for the web UI): " foundry_admin_key
         if ! validate_non_empty "$foundry_admin_key" "Admin key"; then
             continue
         fi
@@ -778,7 +781,7 @@ if [ "$skip_config" = false ]; then
     echo "  - Press Enter for latest stable"
     echo "  - Or enter a major version number (e.g., 12, 13)"
     while true; do
-        read -p "Version [latest]: " foundry_docker_tag
+        read -rp "Version [latest]: " foundry_docker_tag
         if [ -z "$foundry_docker_tag" ] || [ "$foundry_docker_tag" = "latest" ]; then
             foundry_docker_tag="release"
         fi
@@ -794,7 +797,7 @@ if [ "$skip_config" = false ]; then
     echo "  - Or enter a different hostname (will require DNS/Pi-hole configuration)"
     echo
     while true; do
-        read -p "Hostname [$system_hostname]: " foundry_hostname
+        read -rp "Hostname [$system_hostname]: " foundry_hostname
         foundry_hostname=${foundry_hostname:-$system_hostname}
         validate_hostname "$foundry_hostname" && break
     done
@@ -808,7 +811,7 @@ if [ "$skip_config" = false ]; then
         echo
     fi
 
-    read -p "Timezone [America/New_York]: " timezone
+    read -rp "Timezone [America/New_York]: " timezone
     timezone=${timezone:-America/New_York}
 
     # Detect UID/GID for proper file permissions in Docker
@@ -1035,7 +1038,7 @@ if [ -z "$current_image" ]; then
 else
     # Image exists - ask if user wants to check for updates
     echo "Foundry Docker image found locally."
-    read -p "Check for Foundry updates? [y/N]: " check_updates
+    read -rp "Check for Foundry updates? [y/N]: " check_updates
     check_updates=${check_updates:-N}
 
     if [[ "$check_updates" =~ ^[Yy]$ ]]; then

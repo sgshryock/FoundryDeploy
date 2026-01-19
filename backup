@@ -47,7 +47,7 @@ create_backup() {
     temp_dir=$(mktemp -d)
 
     # Cleanup temp directory on exit
-    trap "rm -rf '$temp_dir'" EXIT
+    trap 'rm -rf "$temp_dir"' EXIT
 
     echo "Backup location: $backup_file"
     echo

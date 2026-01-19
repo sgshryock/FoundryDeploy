@@ -308,7 +308,7 @@ show_status() {
     # Show issuer
     issuer=$(sudo openssl x509 -issuer -noout -in "$CERT_PATH" 2>/dev/null)
     if [ -n "$issuer" ]; then
-        echo "  Issuer: $(echo "$issuer" | sed 's/issuer=//')"
+        echo "  Issuer: ${issuer#issuer=}"
     fi
 
     # Show backup status

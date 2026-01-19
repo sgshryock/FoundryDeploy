@@ -17,13 +17,11 @@ if [[ "$INSTANCE_ID" == "i-xxxxxxxxxxxxxxxxx" ]]; then
 fi
 
 # Get instance details
-RESULT=$(aws ec2 describe-instances \
+if ! RESULT=$(aws ec2 describe-instances \
     --instance-ids "$INSTANCE_ID" \
     --region "$REGION" \
     --query 'Reservations[0].Instances[0].[State.Name,PublicIpAddress,InstanceType]' \
-    --output text 2>&1)
-
-if [[ $? -ne 0 ]]; then
+    --output text 2>&1); then
     echo "Error: Failed to get instance status. Check your AWS credentials and instance ID."
     exit 1
 fi

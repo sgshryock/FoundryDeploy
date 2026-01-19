@@ -17,10 +17,10 @@ require_env_file || exit 1
 
 # Start nginx
 echo "Starting nginx..."
-if sudo systemctl start nginx 2>/dev/null; then
-    echo "[OK] nginx started"
+if service_start nginx 2>/dev/null; then
+    log_ok "nginx started"
 else
-    echo "[WARN] Could not start nginx (may already be running)"
+    log_warn "Could not start nginx (may already be running)"
 fi
 
 echo "Starting containers..."
@@ -105,11 +105,15 @@ else
     exit 1
 fi
 
-if systemctl is-active --quiet nginx; then
-    echo "[OK] nginx is running"
+if is_service_running nginx; then
+    log_ok "nginx is running"
 else
-    echo "[ERROR] nginx is not running"
-    echo "  Start it with: sudo systemctl start nginx"
+    log_error "nginx is not running"
+    if [ "$DEPLOY_SERVICE_MANAGER" = "systemd" ]; then
+        echo "  Start it with: sudo systemctl start nginx"
+    else
+        echo "  Start it with: sudo nginx"
+    fi
     exit 1
 fi
 

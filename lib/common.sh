@@ -8,6 +8,10 @@ if [ -n "$_FOUNDRYDEPLOY_COMMON_LOADED" ]; then
 fi
 _FOUNDRYDEPLOY_COMMON_LOADED=1
 
+# Source environment detection
+_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$_COMMON_DIR/environment.sh"
+
 # =============================================================================
 # Logging Functions
 # =============================================================================
@@ -44,6 +48,173 @@ log_error() {
 }
 
 # =============================================================================
+# Service Management Functions (systemd / direct)
+# =============================================================================
+
+# Start a service
+# Usage: service_start <name>
+service_start() {
+    local name=$1
+
+    if [ "$DEPLOY_SERVICE_MANAGER" = "systemd" ]; then
+        sudo systemctl start "$name" 2>/dev/null
+        return $?
+    fi
+
+    # Direct service management
+    case "$name" in
+        nginx)
+            if pgrep -x nginx &>/dev/null; then
+                return 0  # Already running
+            fi
+            sudo nginx
+            return $?
+            ;;
+        docker)
+            if pgrep -x dockerd &>/dev/null; then
+                return 0  # Already running
+            fi
+            sudo dockerd &>/dev/null &
+            sleep 2
+            return 0
+            ;;
+        *)
+            log_error "Unknown service: $name (direct mode)"
+            return 1
+            ;;
+    esac
+}
+
+# Stop a service
+# Usage: service_stop <name>
+service_stop() {
+    local name=$1
+
+    if [ "$DEPLOY_SERVICE_MANAGER" = "systemd" ]; then
+        sudo systemctl stop "$name" 2>/dev/null
+        return $?
+    fi
+
+    # Direct service management
+    case "$name" in
+        nginx)
+            sudo nginx -s stop 2>/dev/null || sudo pkill -x nginx 2>/dev/null
+            return $?
+            ;;
+        docker)
+            sudo pkill -x dockerd 2>/dev/null
+            return $?
+            ;;
+        *)
+            log_error "Unknown service: $name (direct mode)"
+            return 1
+            ;;
+    esac
+}
+
+# Reload a service configuration
+# Usage: service_reload <name>
+service_reload() {
+    local name=$1
+
+    if [ "$DEPLOY_SERVICE_MANAGER" = "systemd" ]; then
+        sudo systemctl reload "$name" 2>/dev/null
+        return $?
+    fi
+
+    # Direct service management
+    case "$name" in
+        nginx)
+            sudo nginx -s reload 2>/dev/null
+            return $?
+            ;;
+        docker)
+            # Docker doesn't support hot reload, would need restart
+            log_warn "Docker doesn't support hot reload"
+            return 1
+            ;;
+        *)
+            log_error "Unknown service: $name (direct mode)"
+            return 1
+            ;;
+    esac
+}
+
+# Restart a service
+# Usage: service_restart <name>
+service_restart() {
+    local name=$1
+
+    if [ "$DEPLOY_SERVICE_MANAGER" = "systemd" ]; then
+        sudo systemctl restart "$name" 2>/dev/null
+        return $?
+    fi
+
+    # Direct: stop then start
+    service_stop "$name"
+    sleep 1
+    service_start "$name"
+    return $?
+}
+
+# Enable a service to start on boot
+# Usage: service_enable <name>
+service_enable() {
+    local name=$1
+
+    if [ "$DEPLOY_SERVICE_MANAGER" = "systemd" ]; then
+        sudo systemctl enable "$name" 2>/dev/null
+        return $?
+    fi
+
+    # For non-systemd, we can't easily enable services
+    # This would require init system-specific configuration
+    log_warn "Auto-start configuration not available without systemd"
+    log_warn "You may need to configure $name to start on boot manually"
+    return 0
+}
+
+# Check if a service is running
+# Usage: is_service_running <name>
+is_service_running() {
+    local name=$1
+
+    if [ "$DEPLOY_SERVICE_MANAGER" = "systemd" ]; then
+        systemctl is-active --quiet "$name" 2>/dev/null
+        return $?
+    fi
+
+    # Direct process check
+    case "$name" in
+        nginx)
+            pgrep -x nginx &>/dev/null
+            return $?
+            ;;
+        docker)
+            pgrep -x dockerd &>/dev/null
+            return $?
+            ;;
+        *)
+            # Generic fallback
+            pgrep -x "$name" &>/dev/null
+            return $?
+            ;;
+    esac
+}
+
+# Get service status message
+# Usage: get_service_status <name>
+get_service_status() {
+    local name=$1
+
+    if is_service_running "$name"; then
+        echo "running"
+    else
+        echo "stopped"
+    fi
+}
+
+# =============================================================================
 # Docker Functions
 # =============================================================================
 
@@ -67,7 +238,14 @@ check_docker_compose() {
 check_docker_daemon() {
     if ! docker info &>/dev/null; then
         log_error "Docker daemon is not running"
-        echo "  Start it with: sudo systemctl start docker"
+        if [ "$DEPLOY_SERVICE_MANAGER" = "systemd" ]; then
+            echo "  Start it with: sudo systemctl start docker"
+        else
+            echo "  Start Docker manually or check your container configuration"
+            if [ "$DEPLOY_ENV_TYPE" = "proxmox_lxc" ]; then
+                echo "  See docs/PROXMOX_LXC.md for Docker-in-LXC setup"
+            fi
+        fi
         return 1
     fi
     return 0
@@ -186,7 +364,7 @@ check_cert_valid() {
 
 # Check if nginx is running
 is_nginx_running() {
-    systemctl is-active --quiet nginx 2>/dev/null
+    is_service_running nginx
 }
 
 # Check if Foundry container is running

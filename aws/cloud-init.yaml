@@ -1,0 +1,121 @@
+#cloud-config
+# FoundryDeploy AWS EC2 User Data Script
+# This cloud-init configuration automatically provisions Foundry VTT on EC2
+
+# Package updates and installation
+package_update: true
+package_upgrade: true
+packages:
+  - git
+  - nginx
+  - openssl
+  - curl
+  - ca-certificates
+
+# Add Docker repository and install
+runcmd:
+  # Install Docker
+  - curl -fsSL https://get.docker.com | sh
+
+  # Start and enable Docker
+  - systemctl start docker
+  - systemctl enable docker
+
+  # Add default user to docker group (ubuntu for Ubuntu AMI, ec2-user for Amazon Linux)
+  - usermod -aG docker ubuntu 2>/dev/null || usermod -aG docker ec2-user 2>/dev/null || true
+
+  # Create foundry user
+  - useradd -m -s /bin/bash foundry
+  - usermod -aG docker foundry
+  - usermod -aG sudo foundry 2>/dev/null || usermod -aG wheel foundry 2>/dev/null || true
+
+  # Download FoundryDeploy setup script
+  - |
+    sudo -u foundry bash -c '
+      cd /home/foundry
+      curl -fsSL https://raw.githubusercontent.com/sgshryock/FoundryDeploy/main/setup -o setup
+      chmod +x setup
+    '
+
+  # Create a marker file to indicate cloud-init completed
+  - touch /home/foundry/.cloud-init-complete
+  - chown foundry:foundry /home/foundry/.cloud-init-complete
+
+  # Display setup instructions
+  - |
+    echo ""
+    echo "=============================================="
+    echo "FoundryDeploy Cloud-Init Complete"
+    echo "=============================================="
+    echo ""
+    echo "To complete setup:"
+    echo "  1. SSH to this instance"
+    echo "  2. Switch to foundry user: sudo su - foundry"
+    echo "  3. Run: ./setup"
+    echo ""
+    echo "Public IP: $(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)"
+    echo ""
+
+# Write a helper script for the user
+write_files:
+  - path: /home/foundry/README.txt
+    owner: foundry:foundry
+    permissions: '0644'
+    content: |
+      FoundryDeploy AWS EC2 Instance
+      ==============================
+
+      This instance has been prepared for Foundry VTT deployment.
+
+      To complete setup:
+
+      1. Run the setup script:
+         ./setup
+
+      2. Follow the prompts to enter your Foundry VTT credentials
+
+      3. Access Foundry at: https://<your-public-ip>
+         (You'll need to accept the self-signed certificate warning)
+
+      Important AWS Configuration:
+
+      - Ensure your Security Group allows:
+        - Port 80 (HTTP) - for redirects
+        - Port 443 (HTTPS) - for Foundry access
+        - Port 22 (SSH) - for management
+
+      - Consider setting up a domain name pointing to this instance
+
+      - For production, set up Let's Encrypt certificates:
+        See docs/AWS_EC2.md for instructions
+
+      Commands:
+        ./start   - Start Foundry
+        ./stop    - Stop Foundry
+        ./logs    - View logs
+        ./remove  - Uninstall
+
+      Public IP: Run 'curl http://169.254.169.254/latest/meta-data/public-ipv4'
+
+  - path: /etc/profile.d/foundry-banner.sh
+    owner: root:root
+    permissions: '0644'
+    content: |
+      if [ -f /home/foundry/.cloud-init-complete ]; then
+        PUBLIC_IP=$(curl -s --connect-timeout 1 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null)
+        echo ""
+        echo "=== Foundry VTT Server ==="
+        echo "Public IP: ${PUBLIC_IP:-unknown}"
+        echo ""
+        if [ -f /home/foundry/FoundryDeploy/.env ]; then
+          echo "Status: Configured - run 'cd /home/foundry/FoundryDeploy && ./start'"
+        else
+          echo "Status: Ready for setup - run 'sudo su - foundry' then './setup'"
+        fi
+        echo ""
+      fi
+
+# Final message
+final_message: |
+  FoundryDeploy cloud-init completed.
+  SSH to this instance and run './setup' as the 'foundry' user.

@@ -93,11 +93,11 @@ if [[ "$remove_nginx" =~ ^[Yy]$ ]]; then
     sudo rm -f /etc/nginx/certs/foundry.key
 
     # Reload nginx if it's running
-    if systemctl is-active --quiet nginx 2>/dev/null; then
-        sudo systemctl reload nginx 2>/dev/null || true
-        echo "[OK] nginx configuration and SSL certificates removed (nginx reloaded)"
+    if is_service_running nginx 2>/dev/null; then
+        service_reload nginx 2>/dev/null || true
+        log_ok "nginx configuration and SSL certificates removed (nginx reloaded)"
     else
-        echo "[OK] nginx configuration and SSL certificates removed"
+        log_ok "nginx configuration and SSL certificates removed"
     fi
 else
     echo "[INFO] nginx configuration kept"

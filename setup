@@ -4,6 +4,18 @@ set -o pipefail
 
 REPO_URL="https://github.com/sgshryock/FoundryDeploy.git"
 
+# Source environment detection and common functions (after clone)
+_source_environment() {
+    local script_dir
+    script_dir="$(cd "$(dirname "$0")" && pwd)"
+    # Source common.sh which will chain-load environment.sh
+    if [ -f "$script_dir/lib/common.sh" ]; then
+        source "$script_dir/lib/common.sh"
+    elif [ -f "lib/common.sh" ]; then
+        source "lib/common.sh"
+    fi
+}
+
 # Determine installation directory
 # If we're already in a FoundryDeploy directory, use current directory
 # Otherwise, use "FoundryDeploy" subdirectory
@@ -289,6 +301,40 @@ done
 chmod +x start stop logs remove
 echo "[OK] Operational scripts verified"
 
+# Source environment detection now that we have the files
+_source_environment
+
+echo
+echo "=== Environment Detection ==="
+echo
+if [ -n "$DEPLOY_ENV_TYPE" ]; then
+    print_environment_summary
+
+    # Environment-specific warnings and guidance
+    case "$DEPLOY_ENV_TYPE" in
+        proxmox_lxc)
+            echo
+            echo "[NOTE] Running in Proxmox LXC container"
+            if [ "$DEPLOY_IS_PRIVILEGED" = false ]; then
+                echo "[WARN] Unprivileged LXC detected - Docker may have limited functionality"
+            fi
+            echo "       See docs/PROXMOX_LXC.md for container configuration requirements"
+            ;;
+        aws_ec2)
+            echo
+            echo "[NOTE] Running on AWS EC2"
+            _ec2_public_ip=$(get_ec2_public_ip)
+            if [ -n "$_ec2_public_ip" ]; then
+                echo "       Public IP: $_ec2_public_ip"
+                echo "       Ensure Security Group allows ports 80 and 443"
+            fi
+            echo "       See docs/AWS_EC2.md for AWS-specific configuration"
+            ;;
+    esac
+else
+    echo "[INFO] Environment: Physical/Unknown (systemd expected)"
+fi
+
 # Validation functions
 validate_non_empty() {
     local value=$1
@@ -394,8 +440,8 @@ if [ -f .env ]; then
                             2>/dev/null
 
                         # Reload nginx to use new certificate
-                        if systemctl is-active --quiet nginx 2>/dev/null; then
-                            sudo systemctl reload nginx
+                        if is_service_running nginx 2>/dev/null; then
+                            service_reload nginx
                         fi
                         echo "[OK] SSL certificate regenerated and nginx reloaded"
                     fi
@@ -599,8 +645,8 @@ if [ "$regenerate_cert" = true ]; then
     echo "[OK] SSL certificate generated (valid for 10 years)"
 
     # Reload nginx if it's running to use new certificate
-    if systemctl is-active --quiet nginx 2>/dev/null; then
-        sudo systemctl reload nginx 2>/dev/null || true
+    if is_service_running nginx 2>/dev/null; then
+        service_reload nginx 2>/dev/null || true
         echo "[OK] nginx reloaded with new certificate"
     fi
 fi
@@ -670,8 +716,8 @@ fi
 
 # Restart nginx
 echo "Starting nginx..."
-sudo systemctl restart nginx
-sudo systemctl enable nginx
+service_restart nginx
+service_enable nginx
 echo "[OK] nginx configured and running"
 
 # Check if Foundry is already initialized

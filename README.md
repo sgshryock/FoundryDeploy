@@ -5,15 +5,18 @@ Run your own Foundry VTT server on a Linux machine.
 > **⚠️ Local Network Only**
 > This setup is designed for **local network use only** (home networks, LANs). It uses self-signed SSL certificates and stores credentials in local files with standard permissions. Do not expose this server directly to the public internet without additional security hardening (proper SSL certificates, firewall configuration, VPN access, etc.).
 
-> **📦 Physical Machine or VM Required**
-> This setup is designed to run on a **physical Linux server or virtual machine**, not inside a Docker/LXC container. It installs and manages system services (nginx, Docker) that require:
-> - systemd for service management
-> - Direct access to `/etc/nginx/` and system configuration
-> - Root/sudo privileges for system-level changes
+> **📦 Supported Environments**
+>
+> | Environment | Support | Notes |
+> |-------------|---------|-------|
+> | Physical Linux | Full | Primary target |
+> | Proxmox VM | Full | Works like physical |
+> | AWS EC2 | Full | See [AWS guide](docs/AWS_EC2.md) |
+> | Proxmox LXC | Supported | Requires nesting - see [LXC guide](docs/PROXMOX_LXC.md) |
 >
 > **Best for:** Raspberry Pi, spare computer, cloud VM (DigitalOcean, Linode, AWS EC2), Proxmox VM, home server
 >
-> **Not suitable for:** Running inside Docker containers, Proxmox LXC containers (without advanced configuration), or other containerized environments
+> **Not suitable for:** Running inside Docker containers or other deeply nested environments
 
 ## Requirements
 
@@ -557,3 +560,14 @@ sudo systemctl reload nginx
 ```
 
 See [nginx documentation](https://nginx.org/en/docs/) for details.
+
+---
+
+## Multi-Platform Deployment Guides
+
+For deployment on specific platforms, see:
+
+- **[AWS EC2](docs/AWS_EC2.md)** - Deploy on Amazon Web Services with cloud-init or Terraform
+- **[Proxmox LXC](docs/PROXMOX_LXC.md)** - Run in Proxmox LXC containers with Docker
+
+The setup script automatically detects your environment and adjusts accordingly.

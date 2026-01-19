@@ -7,7 +7,7 @@ output "instance_id" {
 
 output "public_ip" {
   description = "Public IP address of the EC2 instance"
-  value       = var.create_elastic_ip ? aws_eip.foundry[0].public_ip : aws_instance.foundry.public_ip
+  value       = local.instance_public_ip
 }
 
 output "public_dns" {
@@ -17,12 +17,12 @@ output "public_dns" {
 
 output "foundry_url" {
   description = "URL to access Foundry VTT"
-  value       = "https://${var.create_elastic_ip ? aws_eip.foundry[0].public_ip : aws_instance.foundry.public_ip}"
+  value       = "https://${local.instance_public_ip}"
 }
 
 output "ssh_command" {
   description = "SSH command to connect to the instance"
-  value       = "ssh -i ~/.ssh/${var.key_name}.pem ubuntu@${var.create_elastic_ip ? aws_eip.foundry[0].public_ip : aws_instance.foundry.public_ip}"
+  value       = "ssh -i ~/.ssh/${var.key_name}.pem ubuntu@${local.instance_public_ip}"
 }
 
 output "security_group_id" {
@@ -47,12 +47,12 @@ output "setup_instructions" {
 
     1. Wait a few minutes for cloud-init to complete
     2. SSH to the instance:
-       ${var.create_elastic_ip ? "ssh -i ~/.ssh/${var.key_name}.pem ubuntu@${aws_eip.foundry[0].public_ip}" : "ssh -i ~/.ssh/${var.key_name}.pem ubuntu@${aws_instance.foundry.public_ip}"}
+       ssh -i ~/.ssh/${var.key_name}.pem ubuntu@${local.instance_public_ip}
     3. Switch to foundry user:
        sudo su - foundry
     4. Run setup:
        ./setup
     5. Access Foundry at:
-       https://${var.create_elastic_ip ? aws_eip.foundry[0].public_ip : aws_instance.foundry.public_ip}
+       https://${local.instance_public_ip}
   EOT
 }

@@ -202,3 +202,9 @@ resource "aws_eip" "foundry" {
     Name = "${var.name_prefix}-eip"
   })
 }
+
+# Computed values for outputs
+locals {
+  # Use try() to safely handle case when EIP count is 0
+  instance_public_ip = try(aws_eip.foundry[0].public_ip, aws_instance.foundry.public_ip)
+}

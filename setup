@@ -412,6 +412,8 @@ if [ -f .env ]; then
             }
 
             foundry_hostname=$(parse_env_value "FOUNDRY_HOSTNAME")
+            foundry_docker_tag=$(parse_env_value "FOUNDRY_DOCKER_TAG")
+            foundry_docker_tag=${foundry_docker_tag:-release}
             system_hostname=$(hostname)
 
             # Check if hostname matches system hostname

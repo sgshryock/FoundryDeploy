@@ -1,0 +1,123 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run environment tests
+        run: ./tests/test_environment.sh
+
+      - name: Run common library tests
+        run: ./tests/test_common.sh
+
+  integration-test:
+    name: Integration Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nginx openssl
+
+      - name: Verify scripts are syntactically valid
+        run: |
+          for script in setup start stop logs remove backup restore setup-letsencrypt; do
+            if [ -f "$script" ]; then
+              echo "Checking: $script"
+              bash -n "$script"
+            fi
+          done
+
+      - name: Verify library files
+        run: |
+          for lib in lib/*.sh; do
+            echo "Checking: $lib"
+            bash -n "$lib"
+          done
+
+      - name: Test environment detection (CI runner)
+        run: |
+          source lib/environment.sh
+          echo "Detected environment: $DEPLOY_ENV_TYPE"
+          echo "Service manager: $DEPLOY_SERVICE_MANAGER"
+          echo "Has systemd: $DEPLOY_HAS_SYSTEMD"
+
+          # CI runner should detect as physical with systemd
+          if [ "$DEPLOY_ENV_TYPE" != "physical" ]; then
+            echo "Warning: Expected 'physical' but got '$DEPLOY_ENV_TYPE'"
+          fi
+
+      - name: Test service abstraction (dry run)
+        run: |
+          source lib/common.sh
+
+          # Test that functions exist and don't error on unknown service
+          echo "Testing is_service_running with nginx..."
+          if is_service_running nginx; then
+            echo "nginx is running"
+          else
+            echo "nginx is not running (expected in CI)"
+          fi
+
+  docker-test:
+    name: Docker Environment Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Test in Debian container
+        run: |
+          docker run --rm -v "$PWD:/app" -w /app debian:12 bash -c '
+            apt-get update && apt-get install -y procps bc
+
+            echo "=== Testing in Debian container ==="
+
+            # Source and test environment detection
+            source lib/environment.sh
+
+            echo "Environment: $DEPLOY_ENV_TYPE"
+            echo "Service Manager: $DEPLOY_SERVICE_MANAGER"
+            echo "Has Systemd: $DEPLOY_HAS_SYSTEMD"
+
+            # In container without systemd, should detect as direct
+            if [ "$DEPLOY_SERVICE_MANAGER" = "direct" ]; then
+              echo "PASS: Correctly detected non-systemd environment"
+            else
+              echo "INFO: Detected $DEPLOY_SERVICE_MANAGER (may vary by container)"
+            fi
+
+            # Run unit tests
+            ./tests/test_environment.sh
+            ./tests/test_common.sh
+          '
+
+      - name: Test in Ubuntu container
+        run: |
+          docker run --rm -v "$PWD:/app" -w /app ubuntu:22.04 bash -c '
+            apt-get update && apt-get install -y procps bc
+
+            echo "=== Testing in Ubuntu container ==="
+
+            source lib/environment.sh
+
+            echo "Environment: $DEPLOY_ENV_TYPE"
+            echo "Service Manager: $DEPLOY_SERVICE_MANAGER"
+
+            # Run unit tests
+            ./tests/test_environment.sh
+            ./tests/test_common.sh
+          '

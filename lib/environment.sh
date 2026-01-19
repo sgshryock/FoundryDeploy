@@ -42,7 +42,7 @@ _detect_lxc() {
     fi
 
     # Method 4: Check cgroup for lxc
-    if grep -qa 'lxc' /proc/1/cgroup 2>/dev/null; then
+    if [ -f /proc/1/cgroup ] && grep -qa 'lxc' /proc/1/cgroup 2>/dev/null; then
         return 0
     fi
 

@@ -918,7 +918,7 @@ service_restart nginx
 service_enable nginx
 echo "[OK] nginx configured and running"
 
-# Check if Foundry is already initialized
+# Check Foundry installation status
 echo
 # Get the actual volume name created by Docker Compose (includes project name prefix)
 VOLUME_NAME=$(docker compose config --format json | grep -o '"foundry_data"' | head -1 | tr -d '"' || echo "foundry_data")
@@ -933,14 +933,38 @@ else
 fi
 
 if docker volume ls --format '{{.Name}}' | grep -q "^${FULL_VOLUME_NAME}$"; then
-    echo "[INFO] Checking for existing Foundry installation..."
+    echo "[INFO] Checking for existing Foundry data..."
 
-    # Check if the volume has been initialized (has Data or Config directories)
+    # Check for cached zip file (indicates previous successful download)
+    HAS_CACHED_ZIP=false
+    if docker run --rm -v "${FULL_VOLUME_NAME}:/data" alpine sh -c 'ls /data/container_cache/*.zip 2>/dev/null' | grep -q '.zip'; then
+        HAS_CACHED_ZIP=true
+    fi
+
+    # Check if the volume has user data (Data directory with content)
+    HAS_USER_DATA=false
     if docker run --rm -v "${FULL_VOLUME_NAME}:/data" alpine test -d /data/Data 2>/dev/null; then
-        echo "[OK] Foundry VTT is already initialized"
-        echo "     Already using ${VERSION_MSG}"
+        HAS_USER_DATA=true
+    fi
+
+    if [ "$HAS_CACHED_ZIP" = true ]; then
+        echo "[OK] Foundry download cached (avoids re-download)"
+        echo "     Using ${VERSION_MSG}"
+        if [ "$HAS_USER_DATA" = true ]; then
+            echo "[OK] User data preserved (worlds, modules, etc.)"
+        fi
+        echo
+        echo "[NOTE] The Foundry container reinstalls on each startup."
+        echo "       If you hit rate limits (429 errors), you can:"
+        echo "       1. Wait 30-60 minutes for rate limit to reset"
+        echo "       2. Add FOUNDRY_RELEASE_URL to .env with a direct download link"
+        echo "          (Get it from foundryvtt.com -> Purchased Licenses -> Download)"
+    elif [ "$HAS_USER_DATA" = true ]; then
+        echo "[OK] User data found (worlds, modules, etc.)"
+        echo "[INFO] Foundry will download on startup"
+        echo "      Using ${VERSION_MSG}"
     else
-        echo "[INFO] First container startup - Foundry will initialize"
+        echo "[INFO] First container startup - Foundry will download and initialize"
         echo "      Using ${VERSION_MSG}"
     fi
 else
